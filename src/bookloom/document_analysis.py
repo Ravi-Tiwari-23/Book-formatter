@@ -22,6 +22,7 @@ class DocumentProfile:
     height_pt: float = 841.89
     cover_pages: list[int] = field(default_factory=list)
     toc_pages: list[int] = field(default_factory=list)
+    toc_titles: list[str] = field(default_factory=list)
     hierarchy: dict = field(default_factory=dict)
     major_heading_new_page: bool = False
     numbered_items_compact: bool = False
@@ -94,6 +95,7 @@ def analyze_document(document: ExtractedDocument) -> DocumentProfile:
         if line["page"] in profile.toc_pages:
             label = re.sub(r"\s*\.{2,}\s*\d+\s*$|\s+\d+\s*$", "", line["text"])
             toc_titles.add(_key(label))
+    profile.toc_titles = sorted(toc_titles)
 
     first = [line for line in lines if line["page"] == 1]
     if first and 1 not in profile.toc_pages:

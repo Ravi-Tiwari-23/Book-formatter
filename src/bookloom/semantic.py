@@ -4,6 +4,7 @@ import hashlib
 import re
 
 from .models import (
+    BlockKind,
     DocumentModel,
     ExtractedDocument,
     ExtractedImage,
@@ -12,6 +13,7 @@ from .models import (
     SemanticKind,
     StructuredBlock,
 )
+from .structure import infer_hierarchy, validate_hierarchy
 
 
 _SPECIAL_HEADINGS = {
@@ -54,6 +56,7 @@ def build_document_model(
     *,
     metadata=None,
     language: str = "english",
+    toc_titles: set[str] | None = None,
 ) -> DocumentModel:
     blocks: list[SemanticBlock] = []
     page_types: dict[int, PageType] = {}
@@ -108,9 +111,15 @@ def build_document_model(
                     level=_level(kind),
                     table_rows=table_rows,
                     image_digest=payload.digest if event_type == "image" else None,
+                    font_size=float(payload.get("font_size", 0)) if event_type == "text" else 0.0,
+                    bold=bool(payload.get("bold", False)) if event_type == "text" else False,
                 )
             )
             order += 1
+    blocks = validate_hierarchy(
+        infer_hierarchy(blocks, toc_titles=toc_titles),
+        page_count=document.page_count,
+    )
     return DocumentModel(document.sha256, blocks, page_types, metadata, language)
 
 
@@ -159,6 +168,15 @@ def document_model_from_structured_blocks(
                 chapter_id=block.chapter_id,
                 start_new_page=block.start_new_page,
                 include_in_toc=block.include_in_toc,
+                bold=block.kind in {
+                    BlockKind.BOOK_TITLE,
+                    BlockKind.CHAPTER,
+                    BlockKind.MAJOR_SECTION,
+                    BlockKind.SECTION,
+                    BlockKind.HEADING,
+                    BlockKind.SUBSECTION,
+                    BlockKind.SUBHEADING,
+                },
             )
         )
     return DocumentModel(source_sha256, semantic, page_types or {}, metadata, language)

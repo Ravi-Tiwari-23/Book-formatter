@@ -668,6 +668,7 @@ class ProjectPipeline:
             source,
             metadata=metadata_merge.metadata,
             language=source_analysis.language,
+            toc_titles=set(source_analysis.toc_titles),
         )
         semantic_images = analyze_images(source, document_model)
         source_analysis.image_associations = [

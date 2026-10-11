@@ -254,6 +254,8 @@ class SemanticBlock:
     chapter_id: str | None = None
     start_new_page: bool = False
     include_in_toc: bool = False
+    font_size: float = 0.0
+    bold: bool = False
 
 
 @dataclass(slots=True)

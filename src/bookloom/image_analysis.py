@@ -72,6 +72,7 @@ def analyze_images(document: ExtractedDocument, model: DocumentModel) -> list[Se
             page.page_number == 1
             and len(page.text.strip()) < 200
             and not caption_block
+            and not re.search(r"(?m)^\s*\d+(?:\.\d+)*[.)\-:]?\s+\S+", page.text)
             and not any(
                 block.page_number == 1
                 and block.kind in {SemanticKind.CHAPTER, SemanticKind.SECTION, SemanticKind.SUBSECTION}
