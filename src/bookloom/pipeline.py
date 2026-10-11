@@ -17,6 +17,7 @@ from .cache import DiskCache
 from .config import BookProfile, load_book_style, load_protected_terms
 from .differences import Difference, DifferenceType, compare_sections
 from .extraction import extract_pdf, file_sha256
+from .filenames import allocate_output_path
 from .matching import match_paragraphs, normalize_text
 from .metadata import ReferenceMetadata, extract_reference_metadata, reference_information_text
 from .document_analysis import DocumentProfile, analyze_document
@@ -59,6 +60,9 @@ class ValidationProject:
     performance: dict = field(default_factory=dict)
     reference_metadata: ReferenceMetadata = field(default_factory=ReferenceMetadata)
     document_profile: DocumentProfile | None = None
+    job_id: str | None = None
+    source_upload_name: str | None = None
+    reference_upload_name: str | None = None
 
     def decide(self, correction_id: str, decision: Decision, manual_text: str | None = None) -> None:
         for index, correction in enumerate(self.corrections):
@@ -385,7 +389,7 @@ class ProjectPipeline:
             self.cache_dir, namespace="previews", version="preview-v1"
         )
         self.build_cache = DiskCache(
-            self.cache_dir, namespace="builds", version="build-v13"
+            self.cache_dir, namespace="builds", version="build-v14"
         )
         self.cache = self.extraction_cache
 
@@ -472,6 +476,9 @@ class ProjectPipeline:
         reference_pdf: str | Path,
         *,
         tesseract_path: str | None = None,
+        job_id: str | None = None,
+        source_upload_name: str | None = None,
+        reference_upload_name: str | None = None,
         progress: Callable[[str, int, int], None] | None = None,
     ) -> ValidationProject:
         total_started = time.perf_counter()
@@ -663,6 +670,9 @@ class ProjectPipeline:
             reference_metadata=reference_metadata,
             protected_pages=source_analysis.cover_pages,
             document_profile=source_analysis,
+            job_id=job_id,
+            source_upload_name=source_upload_name or source_path.name,
+            reference_upload_name=reference_upload_name or reference_path.name,
         )
 
     def _fingerprints(self, path: Path) -> set[str]:
@@ -742,7 +752,12 @@ class ProjectPipeline:
             raise ProductionIntegrityError(pre_render, verification_path_target)
         blocks, image_records = self._append_images(base_blocks, project, output)
         formatted = output / "_formatted-book.pdf"
-        final_pdf = output / (profile.output_name(production) if profile else "final-book.pdf")
+        final_pdf = allocate_output_path(
+            output,
+            project.source_upload_name or project.source.path.name,
+            build_key,
+            preview=allow_unresolved_source,
+        )
         style = project.document_profile.style(load_book_style()) if project.document_profile else load_book_style()
         render_book(
             blocks,
@@ -832,8 +847,11 @@ class ProjectPipeline:
         manifest_data = {
             "source_pdf_sha256": project.source.sha256,
             "reference_pdf_sha256": project.reference.sha256,
-            "source_filename": project.source.path.name,
-            "reference_filename": project.reference.path.name,
+            "job_id": project.job_id,
+            "source_filename": project.source_upload_name or project.source.path.name,
+            "reference_filename": project.reference_upload_name or project.reference.path.name,
+            "output_filename": final_pdf.name,
+            "output_version": _output_version(final_pdf),
             "final_text_sha256": hashlib.sha256(approved.encode("utf-8")).hexdigest(),
             "output_pdf_sha256": file_sha256(final_pdf),
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -907,6 +925,7 @@ class ProjectPipeline:
         payload = {
             "source": project.source.sha256,
             "reference": project.reference.sha256,
+            "source_upload_name": project.source_upload_name or project.source.path.name,
             "approved_sha256": hashlib.sha256(approved.encode("utf-8")).hexdigest(),
             "protected_pages": sorted(project.protected_pages),
             "structure": structure,
@@ -1151,6 +1170,11 @@ def _artifacts_exist(artifacts: BuildArtifacts) -> bool:
             artifacts.performance_report,
         )
     )
+
+
+def _output_version(path: Path) -> int | None:
+    match = re.search(r" (\d+)\.pdf$", path.name, flags=re.IGNORECASE)
+    return int(match.group(1)) if match else None
 
 
 def _approved_text_json(project: ValidationProject) -> dict:

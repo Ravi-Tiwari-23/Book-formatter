@@ -29,11 +29,14 @@ from bookloom.blockers import BuildBlockedError
 from bookloom.config import load_book_profile
 from bookloom.integrity import ProductionIntegrityError
 from bookloom.integrity_ui import render_integrity_failure, render_integrity_summary
+from bookloom.jobs import create_job
+from bookloom.filenames import sanitize_source_stem
 from bookloom.models import (
     BlockKind,
     Confidence,
     Correction,
     Decision,
+    ProcessingOptions,
     ReviewStatus,
     StructuredBlock,
 )
@@ -61,9 +64,9 @@ OUTPUT = ROOT / "output" / "pdf"
 def _save_upload(upload, role: str) -> Path:
     data = upload.getvalue()
     digest = hashlib.sha256(data).hexdigest()[:16]
-    directory = WORK / "uploads" / digest
+    directory = WORK / "uploads" / digest / role
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / f"{role}.pdf"
+    path = directory / f"{sanitize_source_stem(upload.name)}.pdf"
     if not path.exists():
         path.write_bytes(data)
     return path
@@ -72,8 +75,9 @@ def _save_upload(upload, role: str) -> Path:
 def _init() -> None:
     existing_pipeline = st.session_state.get("pipeline")
     existing_build_cache = getattr(existing_pipeline, "build_cache", None)
-    if existing_pipeline is None or getattr(existing_build_cache, "version", None) != "build-v13":
+    if existing_pipeline is None or getattr(existing_build_cache, "version", None) != "build-v14":
         st.session_state.pipeline = ProjectPipeline(WORK / "cache")
+    st.session_state.setdefault("job", None)
     st.session_state.setdefault("project", None)
     st.session_state.setdefault("artifacts", None)
     st.session_state.setdefault("text_finalized", False)
@@ -121,7 +125,13 @@ def _init() -> None:
     if project is not None and (project.document_profile is None or project.performance.get('document_analysis_version') != 10):
         counts = Counter(item.source_text for item in project.corrections)
         previous = {item.source_text: item for item in project.corrections if counts[item.source_text] == 1}
-        migrated = st.session_state.pipeline.analyze(project.source.path, project.reference.path)
+        migrated = st.session_state.pipeline.analyze(
+            project.source.path,
+            project.reference.path,
+            job_id=getattr(project, "job_id", None),
+            source_upload_name=getattr(project, "source_upload_name", None),
+            reference_upload_name=getattr(project, "reference_upload_name", None),
+        )
         for item in migrated.corrections:
             old = previous.get(item.source_text)
             if old is not None and old.decision is not None:
@@ -183,6 +193,25 @@ def _upload_and_analyze() -> None:
     if st.button("Start validation", type="primary", disabled=not (source_upload and reference_upload)):
         source_path = _save_upload(source_upload, "source")
         reference_path = _save_upload(reference_upload, "reference")
+        job = create_job(
+            source_upload.name,
+            source_path,
+            reference_upload.name,
+            reference_path,
+            ProcessingOptions(
+                tesseract_path=st.session_state.tesseract_path or None
+            ),
+        )
+        st.session_state.job = job
+        for key in (
+            "project",
+            "artifacts",
+            "text_finalized",
+            "finalized_text_sha256",
+            "integrity_report",
+            "integrity_report_key",
+        ):
+            st.session_state[key] = None if key != "text_finalized" else False
         with st.status("Extracting and comparing PDFs…", expanded=True) as status:
             progress_bar = st.progress(0.0)
             progress_text = st.empty()
@@ -204,6 +233,9 @@ def _upload_and_analyze() -> None:
                 source_path,
                 reference_path,
                 tesseract_path=st.session_state.tesseract_path or None,
+                job_id=job.id,
+                source_upload_name=job.source_upload_name,
+                reference_upload_name=job.reference_upload_name,
                 progress=update_progress,
             )
             st.session_state.project = project
@@ -483,9 +515,13 @@ def _build(project) -> None:
             or bool(any(item.status == ReviewStatus.PENDING for item in project.corrections)),
         )
     if preview_clicked or production_clicked:
-        build_dir = OUTPUT / hashlib.sha256(
+        job = st.session_state.get("job")
+        job_id = job.id if job is not None else hashlib.sha256(
             f"{project.source.sha256}:{project.reference.sha256}".encode()
-        ).hexdigest()[:16] / ("production" if production_clicked else "test-build")
+        ).hexdigest()[:16]
+        build_dir = OUTPUT / job_id / (
+            "production" if production_clicked else "preview"
+        )
         with st.status("Building professional book PDF…", expanded=True) as status:
             try:
                 st.write("Rendering TRUELOGER layout, TOC, page numbers, and bookmarks")
@@ -499,6 +535,8 @@ def _build(project) -> None:
                 )
                 st.write("Running text, PDF, protected-page, and image-provenance QA")
                 st.session_state.artifacts = artifacts
+                if job is not None:
+                    job.artifacts["production" if production_clicked else "preview"] = artifacts.pdf
                 verification = __import__("json").loads(
                     artifacts.verification_report.read_text(encoding="utf-8")
                 )

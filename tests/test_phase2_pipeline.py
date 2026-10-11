@@ -83,7 +83,7 @@ def test_pipeline_counts_only_canonical_33_remedies(tmp_path):
     assert all(section.kind == "numbered_item" for section in project.source_sections)
 
 
-def test_profile_build_uses_production_names_and_records_zero_reference_images(tmp_path):
+def test_profile_build_uses_source_name_and_records_zero_reference_images(tmp_path):
     source = tmp_path / "33 Quick Vastu Remedies.pdf"
     reference = tmp_path / "33 Quick Vastu Remedies(1).pdf"
     _book_pdf(source)
@@ -96,7 +96,7 @@ def test_profile_build_uses_production_names_and_records_zero_reference_images(t
 
     artifacts = pipeline.build(project, tmp_path / "output", profile=profile, production=False)
 
-    assert artifacts.pdf.name == "33-Quick-Vastu-Remedies-TRUELOGER-Test.pdf"
+    assert artifacts.pdf.name == "33 Quick Vastu Remedies 1.pdf"
     assert artifacts.approved_text_json.exists()
     assert artifacts.reference_text_json.exists()
     assert artifacts.source_structure_json.exists()

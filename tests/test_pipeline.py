@@ -28,7 +28,7 @@ def test_complete_pipeline_writes_required_outputs(tmp_path):
     artifacts = pipeline.build(project, output)
 
     expected = {
-        "final-book.pdf",
+        "source 1.pdf",
         "validation-report.md",
         "corrections.json",
         "final-approved-text.md",
@@ -36,6 +36,7 @@ def test_complete_pipeline_writes_required_outputs(tmp_path):
         "verification-report.json",
     }
     assert expected <= {path.name for path in output.iterdir()}
+    assert artifacts.pdf.name == "source 1.pdf"
     manifest = json.loads(artifacts.manifest.read_text(encoding="utf-8"))
     assert manifest["source_pdf_sha256"]
     assert manifest["reference_pdf_sha256"]

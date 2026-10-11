@@ -26,6 +26,31 @@ class Decision(str, Enum):
     USE_REFERENCE = "USE_REFERENCE"
 
 
+@dataclass(frozen=True, slots=True)
+class ProcessingOptions:
+    """User-selected processing options captured at job creation time."""
+
+    tesseract_path: str | None = None
+    generated_cover: bool = True
+    preserve_source_pages: tuple[int, ...] = ()
+
+
+@dataclass(slots=True)
+class ProcessingJob:
+    """All mutable state belonging to one source/reference processing run."""
+
+    id: str
+    source_upload_name: str
+    source_path: Path
+    reference_upload_name: str
+    reference_path: Path
+    options: ProcessingOptions
+    review_overrides: dict[str, str] = field(default_factory=dict)
+    approval_state: dict[str, Any] = field(default_factory=dict)
+    artifacts: dict[str, Path] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
+
+
 class BlockKind(str, Enum):
     DOCUMENT_TITLE = "document_title"
     MAJOR_SECTION = "major_section"
