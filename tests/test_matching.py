@@ -1,4 +1,4 @@
-from truelogger.matching import MatchCategory, match_paragraphs, normalize_text
+from bookloom.matching import MatchCategory, match_paragraphs, normalize_text
 
 
 def test_normalize_text_preserves_devanagari_but_normalizes_spacing():

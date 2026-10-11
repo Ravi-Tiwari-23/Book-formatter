@@ -1,4 +1,4 @@
-from truelogger.cache import DiskCache
+from bookloom.cache import DiskCache
 
 
 def test_disk_cache_round_trips_python_value(tmp_path):

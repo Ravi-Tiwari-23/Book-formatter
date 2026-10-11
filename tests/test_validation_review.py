@@ -1,9 +1,9 @@
 import pytest
 
-from truelogger.matching import MatchCategory, PassageMatch, match_paragraphs
-from truelogger.models import Decision, ReviewStatus
-from truelogger.review import apply_decision, finalize_text
-from truelogger.validation import build_corrections
+from bookloom.matching import MatchCategory, PassageMatch, match_paragraphs
+from bookloom.models import Decision, ReviewStatus
+from bookloom.review import apply_decision, finalize_text
+from bookloom.validation import build_corrections
 
 
 def _match(source: str, reference: str, score: float = 96) -> PassageMatch:

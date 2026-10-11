@@ -2,9 +2,9 @@ import json
 
 import pymupdf
 
-from truelogger.models import Decision
-from truelogger.pipeline import ProjectPipeline
-from truelogger.verification import verify_pdf
+from bookloom.models import Decision
+from bookloom.pipeline import ProjectPipeline
+from bookloom.verification import verify_pdf
 
 
 def _pdf(path, text):

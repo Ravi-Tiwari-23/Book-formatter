@@ -369,7 +369,7 @@ def _integrity_payload(
 
 
 class ProjectPipeline:
-    def __init__(self, cache_dir: str | Path = ".cache/truelogger"):
+    def __init__(self, cache_dir: str | Path = ".cache/bookloom"):
         self.cache_dir = Path(cache_dir)
         self.extraction_cache = DiskCache(
             self.cache_dir, namespace="extraction", version="extraction-v4"

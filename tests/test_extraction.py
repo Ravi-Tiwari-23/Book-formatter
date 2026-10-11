@@ -1,6 +1,6 @@
 import fitz
 
-from truelogger.extraction import extract_pdf
+from bookloom.extraction import extract_pdf
 
 
 def test_text_pdf_is_extracted_without_ocr(tmp_path):

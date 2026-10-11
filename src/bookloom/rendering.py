@@ -17,6 +17,7 @@ def _configure_weasyprint_dlls() -> str | None:
     if configured:
         return configured
     candidates = [
+        os.environ.get("BOOKLOOM_GTK_BIN"),
         os.environ.get("TRUELOGGER_GTK_BIN"),
         r"C:\msys64-truelogger\ucrt64\bin",
         r"C:\msys64\ucrt64\bin",

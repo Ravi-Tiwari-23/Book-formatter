@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from truelogger.metadata import extract_reference_metadata, reference_information_text
-from truelogger.models import ExtractedDocument, ExtractedPage
+from bookloom.metadata import extract_reference_metadata, reference_information_text
+from bookloom.models import ExtractedDocument, ExtractedPage
 
 
 def _document(*pages: str) -> ExtractedDocument:

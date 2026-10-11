@@ -4,14 +4,14 @@ import pymupdf
 import pytest
 from PIL import Image
 
-from truelogger.differences import DifferenceType, compare_sections
-from truelogger.extraction import extract_pdf
-from truelogger.models import BookSection, Confidence, Correction, ReviewStatus
-from truelogger.provenance import ImageFirewallError, verify_image_firewall
-from truelogger.sections import align_sections, detect_document_sections, detect_sections
-from truelogger.validation import build_corrections
-from truelogger.matching import MatchCategory, PassageMatch
-from truelogger.blockers import BuildBlockedError, validate_production_readiness
+from bookloom.differences import DifferenceType, compare_sections
+from bookloom.extraction import extract_pdf
+from bookloom.models import BookSection, Confidence, Correction, ReviewStatus
+from bookloom.provenance import ImageFirewallError, verify_image_firewall
+from bookloom.sections import align_sections, detect_document_sections, detect_sections
+from bookloom.validation import build_corrections
+from bookloom.matching import MatchCategory, PassageMatch
+from bookloom.blockers import BuildBlockedError, validate_production_readiness
 
 
 def _document_with_image(path):

@@ -2,10 +2,10 @@ from pypdf import PdfReader
 from PIL import Image
 import pymupdf
 
-from truelogger.models import BlockKind, StructuredBlock
-from truelogger.rendering import build_book_html, render_book
-from truelogger.assets import prepend_protected_pages
-from truelogger.verification import verify_pdf
+from bookloom.models import BlockKind, StructuredBlock
+from bookloom.rendering import build_book_html, render_book
+from bookloom.assets import prepend_protected_pages
+from bookloom.verification import verify_pdf
 
 
 def test_renderer_creates_numbered_pdf_with_outline(tmp_path):

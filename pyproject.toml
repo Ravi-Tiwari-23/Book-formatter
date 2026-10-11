@@ -3,9 +3,9 @@ requires = ["setuptools>=75", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "truelogger-book"
+name = "bookloom"
 version = "0.1.0"
-description = "Reference-based Hindi/English PDF validation and book production"
+description = "Source-faithful multilingual PDF validation and book production"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -28,4 +28,5 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+pythonpath = ["src"]
 

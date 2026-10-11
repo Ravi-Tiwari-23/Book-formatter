@@ -2,15 +2,15 @@ from pathlib import Path
 
 import pymupdf
 
-from truelogger.cache import DiskCache
-from truelogger.extraction import extract_pdf
-from truelogger.matching import match_paragraphs
-from truelogger.preview import render_page_preview
-from truelogger.ui_helpers import correction_counts, paginate
-from truelogger.pipeline import ProjectPipeline
-from truelogger.models import Decision, ReviewStatus
-from truelogger.matching import MatchCategory, PassageMatch
-from truelogger.validation import build_corrections
+from bookloom.cache import DiskCache
+from bookloom.extraction import extract_pdf
+from bookloom.matching import match_paragraphs
+from bookloom.preview import render_page_preview
+from bookloom.ui_helpers import correction_counts, paginate
+from bookloom.pipeline import ProjectPipeline
+from bookloom.models import Decision, ReviewStatus
+from bookloom.matching import MatchCategory, PassageMatch
+from bookloom.validation import build_corrections
 
 
 def _text_pdf(path: Path, text: str = "Usable native text with enough characters for extraction."):
@@ -23,7 +23,7 @@ def _text_pdf(path: Path, text: str = "Usable native text with enough characters
 def test_native_text_page_never_invokes_ocr(tmp_path, monkeypatch):
     path = tmp_path / "native.pdf"
     _text_pdf(path)
-    monkeypatch.setattr("truelogger.extraction.ocr_image", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("OCR invoked")))
+    monkeypatch.setattr("bookloom.extraction.ocr_image", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("OCR invoked")))
     result = extract_pdf(path, ocr_cache=DiskCache(tmp_path / "cache", namespace="ocr"))
     assert result.pages[0].method == "NATIVE"
     assert result.metrics["ocr_pages"] == 0
@@ -44,7 +44,7 @@ def test_cached_ocr_page_does_not_rerun_ocr(tmp_path, monkeypatch):
         calls["count"] += 1
         return Result()
 
-    monkeypatch.setattr("truelogger.extraction.ocr_image", fake_ocr)
+    monkeypatch.setattr("bookloom.extraction.ocr_image", fake_ocr)
     cache = DiskCache(tmp_path / "cache", namespace="ocr", version="ocr-v1")
     first = extract_pdf(path, ocr_cache=cache)
     second = extract_pdf(path, ocr_cache=cache)
@@ -60,7 +60,7 @@ def test_exact_matches_bypass_rapidfuzz(tmp_path, monkeypatch):
         calls["count"] += 1
         return 100
 
-    monkeypatch.setattr("truelogger.matching.fuzz.WRatio", counted)
+    monkeypatch.setattr("bookloom.matching.fuzz.WRatio", counted)
     result = match_paragraphs([(1, "Exact text")], [(9, "Exact   text")])
     assert result[0].category.value == "EXACT_MATCH"
     assert calls["count"] == 0
@@ -168,7 +168,7 @@ def test_identical_build_reuses_verified_artifacts(tmp_path, monkeypatch):
     first = pipeline.build(project, tmp_path / "output")
 
     monkeypatch.setattr(
-        "truelogger.pipeline.render_book",
+        "bookloom.pipeline.render_book",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("build reran")),
     )
     second = pipeline.build(project, tmp_path / "output")
@@ -278,7 +278,7 @@ def test_preview_build_can_use_source_for_unresolved_passages(tmp_path):
 
 def test_exact_match_skips_independent_grammar_analysis(monkeypatch):
     monkeypatch.setattr(
-        "truelogger.validation.validate_grammar",
+        "bookloom.validation.validate_grammar",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("grammar ran")),
     )
     match = PassageMatch("same text", "same text", 1, 1, 100, MatchCategory.EXACT_MATCH)

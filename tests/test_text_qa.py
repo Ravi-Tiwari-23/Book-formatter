@@ -2,7 +2,7 @@ import unicodedata
 
 import pymupdf
 
-from truelogger.integrity import (
+from bookloom.integrity import (
     IntegrityDifferenceType,
     TextUnit,
     compare_text_units,
@@ -10,7 +10,7 @@ from truelogger.integrity import (
     normalize_integrity_text,
     verify_rendered_pdf,
 )
-from truelogger.verification import verify_text_integrity
+from bookloom.verification import verify_text_integrity
 
 
 def _unit(identity: str, text: str, order: int = 0, chapter: str = "01") -> TextUnit:

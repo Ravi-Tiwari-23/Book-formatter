@@ -4,10 +4,10 @@ from pathlib import Path
 import pymupdf
 from PIL import Image, ImageDraw, ImageFont
 
-from truelogger.pipeline import ProjectPipeline
-from truelogger.models import Decision
-from truelogger.document_analysis import analyze_document
-from truelogger.extraction import extract_pdf
+from bookloom.pipeline import ProjectPipeline
+from bookloom.models import Decision
+from bookloom.document_analysis import analyze_document
+from bookloom.extraction import extract_pdf
 
 
 def make_document(path, pattern):
@@ -66,7 +66,7 @@ def make_document(path, pattern):
             page.insert_text((65, y), row[0], fontsize=11)
             page.insert_text((230, y), row[1], fontsize=11)
     elif pattern == "mixed_hindi":
-        from truelogger.ocr import find_tesseract
+        from bookloom.ocr import find_tesseract
         assert find_tesseract(), "This acceptance fixture requires local Hindi + English OCR"
         native = pymupdf.open(); page = native.new_page()
         page.insert_htmlbox(pymupdf.Rect(50, 50, 545, 750),
@@ -139,8 +139,8 @@ def test_reference_layout_does_not_change_source_profile(tmp_path):
 
 
 def test_internal_section_ids_are_not_reference_matching_evidence():
-    from truelogger.models import BookSection
-    from truelogger.sections import align_sections
+    from bookloom.models import BookSection
+    from bookloom.sections import align_sections
     source = [BookSection(1, 'Astronomy', ['Stars and galaxies'], 1, 1)]
     reference = [BookSection(1, 'Cooking', ['Soup recipes'], 1, 1)]
     assert align_sections(source, reference, match_numbers=False)[0].reference is None
@@ -156,9 +156,9 @@ def test_mixed_index_page_does_not_discard_body_or_metadata(tmp_path):
 
 
 def test_hindi_rendered_text_qa_still_detects_changed_words(tmp_path):
-    from truelogger.integrity import TextUnit, verify_rendered_pdf
-    from truelogger.models import BlockKind, StructuredBlock
-    from truelogger.rendering import render_book
+    from bookloom.integrity import TextUnit, verify_rendered_pdf
+    from bookloom.models import BlockKind, StructuredBlock
+    from bookloom.rendering import render_book
     text = 'हिन्दी विचार दिए गए हैं। विषय और विज्ञान सुरक्षित हैं।'
     output = render_book([StructuredBlock(BlockKind.BODY, text)], tmp_path / 'unicode.pdf', include_title_page=False)
     assert verify_rendered_pdf(output, [TextUnit('1', '1', '', 0, text)]).passed

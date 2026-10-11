@@ -9,27 +9,27 @@ from pathlib import Path
 
 import streamlit as st
 
-import truelogger.pipeline as _pipeline_module
+import bookloom.pipeline as _pipeline_module
 
 if getattr(_pipeline_module, "INTEGRITY_QA_VERSION", 1) < 13:
     # Dataclasses and enums stored in Session State must keep one class
     # identity for the life of the process. Reload only the cache implementation
     # and its pipeline consumer; reloading models makes otherwise valid enum
     # instances impossible to pickle.
-    import truelogger.cache as _cache_module
-    import truelogger.integrity as _integrity_module
-    import truelogger.integrity_ui as _integrity_ui_module
+    import bookloom.cache as _cache_module
+    import bookloom.integrity as _integrity_module
+    import bookloom.integrity_ui as _integrity_ui_module
 
     importlib.reload(_cache_module)
     importlib.reload(_integrity_module)
     importlib.reload(_integrity_ui_module)
     importlib.reload(_pipeline_module)
 
-from truelogger.blockers import BuildBlockedError
-from truelogger.config import load_book_profile
-from truelogger.integrity import ProductionIntegrityError
-from truelogger.integrity_ui import render_integrity_failure, render_integrity_summary
-from truelogger.models import (
+from bookloom.blockers import BuildBlockedError
+from bookloom.config import load_book_profile
+from bookloom.integrity import ProductionIntegrityError
+from bookloom.integrity_ui import render_integrity_failure, render_integrity_summary
+from bookloom.models import (
     BlockKind,
     Confidence,
     Correction,
@@ -37,13 +37,13 @@ from truelogger.models import (
     ReviewStatus,
     StructuredBlock,
 )
-from truelogger.ocr import find_tesseract
-from truelogger.pipeline import ProjectPipeline, ValidationProject, proposed_structure
-from truelogger.preview import render_page_preview
-from truelogger.rendering import weasyprint_available
-from truelogger.review import finalize_text
-from truelogger.structure import detect_structure
-from truelogger.ui_helpers import (
+from bookloom.ocr import find_tesseract
+from bookloom.pipeline import ProjectPipeline, ValidationProject, proposed_structure
+from bookloom.preview import render_page_preview
+from bookloom.rendering import weasyprint_available
+from bookloom.review import finalize_text
+from bookloom.structure import detect_structure
+from bookloom.ui_helpers import (
     approved_text_sha256,
     correction_counts,
     current_integrity_report,
@@ -529,7 +529,7 @@ def _build(project) -> None:
         st.session_state, approved_text_sha256(project.corrections)
     )
     if report and not report.get("passed", False):
-        from truelogger.integrity import IntegrityDifferenceType, IntegrityIssue, IntegrityReport
+        from bookloom.integrity import IntegrityDifferenceType, IntegrityIssue, IntegrityReport
 
         issues = [
             IntegrityIssue(
@@ -610,18 +610,15 @@ def _downloads(artifacts) -> None:
 
 def main() -> None:
     rerun_started = time.perf_counter()
-    st.set_page_config(page_title="Truelogger Book Validator", page_icon="📚", layout="wide")
-    st.markdown(
-        """<style>
-        .block-container {max-width: 1180px; padding-top: 2rem;}
-        h1, h2, h3 {letter-spacing: -0.02em;}
-        [data-testid="stMetric"] {background:#faf6f0;border:1px solid #eadfce;padding:1rem;border-radius:.6rem;}
-        </style>""",
-        unsafe_allow_html=True,
+    st.set_page_config(
+        page_title="Bookloom",
+        page_icon=":material/auto_stories:",
+        layout="wide",
+        initial_sidebar_state="expanded",
     )
     _init()
-    st.title("Book Validation & Formatter")
-    st.caption("Reference-led correction · human approval · protected assets · professional PDF")
+    st.title("Bookloom")
+    st.caption("Source-faithful PDF review and professional book production")
     _system_status()
     _upload_and_analyze()
     project = st.session_state.project

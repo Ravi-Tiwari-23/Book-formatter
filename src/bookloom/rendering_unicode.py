@@ -13,7 +13,7 @@ import weasyprint.draw as drawing
 
 def install() -> None:
     original = drawing.draw_text
-    if getattr(original, '_truelogger_actual_text', False):
+    if getattr(original, '_bookloom_actual_text', False):
         return
 
     @wraps(original)
@@ -37,5 +37,5 @@ def install() -> None:
             if use_actual:
                 stream.end_marked_content()
 
-    draw_line._truelogger_actual_text = True
+    draw_line._bookloom_actual_text = True
     drawing.draw_text = draw_line

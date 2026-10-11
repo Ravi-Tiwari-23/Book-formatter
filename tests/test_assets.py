@@ -3,7 +3,7 @@ import hashlib
 import pymupdf
 from pypdf import PdfReader, PdfWriter
 
-from truelogger.assets import AssetClass, classify_source_image, prepend_protected_pages
+from bookloom.assets import AssetClass, classify_source_image, prepend_protected_pages
 
 
 def _content_hash(page) -> str:

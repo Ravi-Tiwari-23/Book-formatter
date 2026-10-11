@@ -218,7 +218,7 @@ def detect_document_sections(
         return (
             folded in repeated_noise
             or _is_doubled_artifact(text)
-            or folded in {"trueloger.com", "truelogger.com"}
+            or folded in {"trueloger.com", "truelogger.com", "bookloom.com"}
             or bool(re.fullmatch(r"truelogg?er\.com\s+\d{1,3}", folded))
             or bool(re.fullmatch(r"(?:page\s*)?\d{1,3}", folded))
         )

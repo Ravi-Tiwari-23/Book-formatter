@@ -1,8 +1,8 @@
 from streamlit.testing.v1 import AppTest
 
-from truelogger.models import StructuredBlock, BlockKind
-from truelogger.pipeline import canonical_text_units
-from truelogger.ui_helpers import (
+from bookloom.models import StructuredBlock, BlockKind
+from bookloom.pipeline import canonical_text_units
+from bookloom.ui_helpers import (
     approved_text_sha256,
     current_integrity_report,
     finalization_is_current,
@@ -15,11 +15,11 @@ from test_production_integrity import _project
 def test_integrity_failure_panel_is_actionable_without_traceback():
     script = r'''
 import streamlit as st
-from truelogger.integrity import (
+from bookloom.integrity import (
     IntegrityDifferenceType, IntegrityIssue, IntegrityReport,
     ProductionIntegrityError,
 )
-from truelogger.integrity_ui import render_integrity_failure
+from bookloom.integrity_ui import render_integrity_failure
 
 issues = [
     IntegrityIssue(
@@ -54,11 +54,11 @@ render_integrity_failure(ProductionIntegrityError(report))
 
 def test_integrity_failure_allows_multiple_findings_for_one_unit():
     script = r'''
-from truelogger.integrity import (
+from bookloom.integrity import (
     IntegrityDifferenceType, IntegrityIssue, IntegrityReport,
     ProductionIntegrityError,
 )
-from truelogger.integrity_ui import render_integrity_failure
+from bookloom.integrity_ui import render_integrity_failure
 
 shared = dict(
     canonical_id="same-unit", chapter_id="1", chapter_title="Chapter",

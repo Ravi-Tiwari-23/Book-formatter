@@ -4,8 +4,8 @@ import json
 import pymupdf
 from PIL import Image
 
-from truelogger.config import load_book_profile
-from truelogger.models import (
+from bookloom.config import load_book_profile
+from bookloom.models import (
     BlockKind,
     BookSection,
     Decision,
@@ -14,8 +14,8 @@ from truelogger.models import (
     ExtractedPage,
     StructuredBlock,
 )
-from truelogger.pipeline import ValidationProject
-from truelogger.pipeline import ProjectPipeline
+from bookloom.pipeline import ValidationProject
+from bookloom.pipeline import ProjectPipeline
 
 
 def _book_pdf(path, *, reference=False):

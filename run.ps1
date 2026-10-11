@@ -5,6 +5,7 @@ if (-not (Test-Path .\.venv\Scripts\python.exe)) {
 }
 
 $gtkCandidates = @(
+    $env:BOOKLOOM_GTK_BIN,
     $env:TRUELOGGER_GTK_BIN,
     "C:\msys64-truelogger\ucrt64\bin",
     "C:\msys64\ucrt64\bin"

@@ -1,4 +1,4 @@
-from truelogger.grammar import validate_grammar
+from bookloom.grammar import validate_grammar
 
 
 def test_duplicate_token_is_reported_conservatively():

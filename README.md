@@ -1,4 +1,8 @@
-# Truelogger Book Validator
+# Bookloom
+
+Bookloom is the PDF review and production application. Trueloger is retained
+only as the publisher identity used by the current house style and source
+materials; it is not the software name.
 
 A local Windows application for reference-led Hindi/English PDF validation,
 human correction approval, and professional book production. The source and
@@ -75,7 +79,8 @@ the exact WeasyPrint CSS layout.
 
 The launcher automatically discovers the official MSYS2 UCRT64 runtime at
 `C:\msys64-truelogger\ucrt64\bin` or `C:\msys64\ucrt64\bin`. A custom runtime
-can be selected with `TRUELOGGER_GTK_BIN`; no global `PATH` modification is
+can be selected with `BOOKLOOM_GTK_BIN` (or the legacy
+`TRUELOGGER_GTK_BIN`); no global `PATH` modification is
 required.
 
 ## Tests

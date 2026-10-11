@@ -1,5 +1,5 @@
-from truelogger.models import BlockKind
-from truelogger.structure import detect_structure
+from bookloom.models import BlockKind
+from bookloom.structure import detect_structure
 
 
 def test_structure_detects_title_chapter_heading_verse_and_body():

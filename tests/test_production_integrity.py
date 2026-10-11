@@ -4,8 +4,8 @@ from pathlib import Path
 import pymupdf
 import pytest
 
-from truelogger.integrity import ProductionIntegrityError
-from truelogger.models import (
+from bookloom.integrity import ProductionIntegrityError
+from bookloom.models import (
     BookSection,
     BlockKind,
     Confidence,
@@ -15,7 +15,7 @@ from truelogger.models import (
     ReviewStatus,
     StructuredBlock,
 )
-from truelogger.pipeline import (
+from bookloom.pipeline import (
     ProjectPipeline,
     ValidationProject,
     canonical_text_units,
@@ -136,7 +136,7 @@ def test_production_failure_persists_report_before_domain_error(tmp_path, monkey
         document.close()
         return Path(output_path)
 
-    monkeypatch.setattr("truelogger.pipeline.render_book", render_corrupt)
+    monkeypatch.setattr("bookloom.pipeline.render_book", render_corrupt)
 
     with pytest.raises(ProductionIntegrityError) as caught:
         pipeline.build(project, tmp_path / "output", production=True)
