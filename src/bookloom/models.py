@@ -102,6 +102,22 @@ class SemanticKind(str, Enum):
     REFERENCES = "references"
 
 
+class VisualClass(str, Enum):
+    PHOTO = "photo"
+    ILLUSTRATION = "illustration"
+    DIAGRAM = "diagram"
+    CHART = "chart"
+    RASTER_TABLE = "raster_table"
+    TEXTUAL_FIGURE = "textual_figure"
+    COVER_ART = "cover_art"
+    LOGO = "logo"
+    FURNITURE = "furniture"
+    WATERMARK = "watermark"
+    SCAN = "scan"
+    ARTIFACT = "artifact"
+    UNKNOWN = "unknown"
+
+
 @dataclass(slots=True)
 class ExtractedImage:
     page_number: int
@@ -285,6 +301,24 @@ class DocumentModel:
             )
             for block in self.blocks
         ]
+
+
+@dataclass(slots=True)
+class SemanticImage:
+    occurrence_id: str
+    digest: str
+    classification: VisualClass
+    source_page: int
+    bbox: tuple[float, float, float, float] | None
+    coverage: float
+    aspect_ratio: float
+    emit: bool
+    confidence: float
+    logical_key: str
+    insert_before_block_id: str | None = None
+    insert_after_block_id: str | None = None
+    parent_block_id: str | None = None
+    caption: str | None = None
 
 
 @dataclass(slots=True)

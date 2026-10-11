@@ -9,11 +9,38 @@ import pymupdf
 from pypdf import PdfReader
 
 from .assets import verify_protected_pages
+from .models import BlockKind, StructuredBlock
 from .integrity import (
     IntegrityDifferenceType,
     TextUnit,
     verify_rendered_pdf,
 )
+
+
+def verify_image_occurrences(
+    expected_records: list[dict[str, Any]],
+    rendered_blocks: list[StructuredBlock],
+) -> dict[str, Any]:
+    expected = [record["occurrence_id"] for record in expected_records]
+    actual = [
+        block.source_id
+        for block in rendered_blocks
+        if block.kind == BlockKind.IMAGE and block.source_id
+    ]
+    duplicate = sorted({identity for identity in actual if actual.count(identity) > 1})
+    missing = [identity for identity in expected if identity not in actual]
+    unexpected = [identity for identity in actual if identity not in expected]
+    common_expected = [identity for identity in expected if identity in actual]
+    common_actual = [identity for identity in actual if identity in expected]
+    return {
+        "valid": not (missing or duplicate or unexpected or common_expected != common_actual),
+        "expected": expected,
+        "rendered": actual,
+        "missing": missing,
+        "duplicate": duplicate,
+        "unexpected": unexpected,
+        "misordered": common_expected != common_actual,
+    }
 
 
 def verify_pdf(

@@ -11,7 +11,7 @@ import time
 
 import pymupdf
 
-from .assets import classify_source_image, prepend_protected_pages
+from .assets import prepend_protected_pages
 from .blockers import validate_production_readiness
 from .cache import DiskCache
 from .config import BookProfile, load_book_style, load_protected_terms
@@ -35,7 +35,8 @@ from .integrity import (
     pdf_body_start_page_index,
     verify_rendered_pdf,
 )
-from .models import BookSection, BlockKind, Confidence, Correction, Decision, DocumentApproval, DocumentModel, ExtractedDocument, StructuredBlock
+from .image_analysis import analyze_images
+from .models import BookSection, BlockKind, Confidence, Correction, Decision, DocumentApproval, DocumentModel, ExtractedDocument, SemanticImage, StructuredBlock
 from .provenance import pdf_image_fingerprints, verify_image_firewall
 from .rendering import render_book, weasyprint_available
 from .review import apply_decision, default_decision_for, effective_decision, effective_text, finalize_text
@@ -43,7 +44,7 @@ from .sections import SectionMatch, align_sections, detect_document_sections, no
 from .semantic import build_document_model, document_model_from_structured_blocks
 from .structure import detect_structure
 from .validation import build_corrections
-from .verification import verify_pdf, write_verification_report
+from .verification import verify_image_occurrences, verify_pdf, write_verification_report
 
 
 INTEGRITY_QA_VERSION = 13
@@ -70,6 +71,8 @@ class ValidationProject:
     metadata: DocumentMetadata = field(default_factory=DocumentMetadata)
     metadata_findings: tuple[MetadataFinding, ...] = ()
     document_model: DocumentModel | None = None
+    source_document_model: DocumentModel | None = None
+    semantic_images: list[SemanticImage] = field(default_factory=list)
     document_profile: DocumentProfile | None = None
     job_id: str | None = None
     source_upload_name: str | None = None
@@ -239,6 +242,7 @@ def _canonical_blocks(
             StructuredBlock(
                 BlockKind.BODY,
                 unit.text,
+                page_number=unit.source_page,
                 source_id=unit.id,
                 chapter_id=unit.chapter_id,
             )
@@ -660,6 +664,28 @@ class ProjectPipeline:
             "preview_cache_hits": 0,
             "build_cache_hits": 0,
         }
+        document_model = build_document_model(
+            source,
+            metadata=metadata_merge.metadata,
+            language=source_analysis.language,
+        )
+        semantic_images = analyze_images(source, document_model)
+        source_analysis.image_associations = [
+            {
+                "occurrence_id": item.occurrence_id,
+                "digest": item.digest,
+                "source_page": item.source_page,
+                "bbox": item.bbox,
+                "parent_section_id": item.parent_block_id,
+                "confidence": item.confidence,
+                "classification": item.classification.value,
+                "emit": item.emit,
+                "insert_before_block_id": item.insert_before_block_id,
+                "insert_after_block_id": item.insert_after_block_id,
+                "caption": item.caption,
+            }
+            for item in semantic_images
+        ]
         return ValidationProject(
             source=source,
             reference=reference,
@@ -677,11 +703,9 @@ class ProjectPipeline:
             source_metadata=source_metadata,
             metadata=metadata_merge.metadata,
             metadata_findings=metadata_merge.findings,
-            document_model=build_document_model(
-                source,
-                metadata=metadata_merge.metadata,
-                language=source_analysis.language,
-            ),
+            document_model=document_model,
+            source_document_model=document_model,
+            semantic_images=semantic_images,
             protected_pages=source_analysis.cover_pages,
             document_profile=source_analysis,
             job_id=job_id,
@@ -824,6 +848,8 @@ class ProjectPipeline:
 
         qa_dir = output / "qa-pages"
         verification = verify_pdf(final_pdf, protected_records=protected_records, render_directory=qa_dir)
+        verification["image_occurrences"] = verify_image_occurrences(image_records, blocks)
+        verification["valid"] = verification["valid"] and verification["image_occurrences"]["valid"]
         provenance = verify_image_firewall(
             output_fingerprints=pdf_image_fingerprints(final_pdf),
             source_fingerprints=project.source_image_fingerprints,
@@ -984,76 +1010,114 @@ class ProjectPipeline:
         project: ValidationProject,
         output: Path,
     ) -> tuple[list[StructuredBlock], list[dict]]:
-        images_by_chapter: dict[str, list[StructuredBlock]] = {}
-        unmapped_images: list[StructuredBlock] = []
         asset_dir = output / "assets"
-        seen: set[str] = set()
         records: list[dict] = []
-        for page in project.source.pages:
-            for image in page.images:
-                occurrence = (image.digest, page.page_number, image.bbox)
-                if occurrence in seen:
-                    continue
-                seen.add(occurrence)
-                classification = classify_source_image(
-                    page.page_number,
-                    image.bbox,
-                    page.width or 0,
-                    page.height or 0,
-                )
-                if page.page_number in project.protected_pages or (project.document_profile is None and classification.value in {
-                    "DECORATIVE",
-                    "PROTECTED_BRANDING",
-                }):
-                    continue
-                association = next((a for a in project.document_profile.image_associations if a["digest"] == image.digest and a["source_page"] == page.page_number and tuple(a["bbox"] or ()) == tuple(image.bbox or ())), None) if project.document_profile else None
-                if association and association["classification"] != "content_image":
-                    continue
-                chapter_id = association["parent_section_id"] if association else _image_chapter_id(project, page, image.bbox)
-                if project.source_sections and not chapter_id:
-                    # An unmatched image from title/front matter is usually a
-                    # logo or decorative asset. Never attach it to the final
-                    # remedy merely because it is last in document order.
-                    continue
-                asset_dir.mkdir(parents=True, exist_ok=True)
-                path = asset_dir / f"{image.digest}.{image.extension}"
+        if not project.semantic_images and any(page.images for page in project.source.pages):
+            source_model = project.source_document_model or build_document_model(project.source)
+            project.source_document_model = source_model
+            project.semantic_images = analyze_images(project.source, source_model)
+        source_images = {
+            (image.digest, page.page_number, image.bbox): image
+            for page in project.source.pages
+            for image in page.images
+        }
+        insertions: dict[int, list[StructuredBlock]] = {}
+        for semantic in project.semantic_images:
+            if not semantic.emit or semantic.source_page in project.protected_pages:
+                continue
+            image = source_images.get((semantic.digest, semantic.source_page, semantic.bbox))
+            if image is None:
+                continue
+            asset_dir.mkdir(parents=True, exist_ok=True)
+            path = asset_dir / f"{semantic.occurrence_id}.{image.extension}"
+            if not path.exists():
                 path.write_bytes(image.data)
-                records.append(
-                    {
-                        "source_page": page.page_number,
-                        "sha256": image.digest,
-                        "output_file": str(path.relative_to(output)),
-                        "extension": image.extension,
-                        "classification": association["classification"] if association else classification.value,
-                        "association": association,
-                    }
+            insertion_index, chapter_id = _semantic_image_insertion(
+                base_blocks, project.source_document_model, semantic
+            )
+            if chapter_id is None:
+                source_page = next(
+                    (page for page in project.source.pages if page.page_number == semantic.source_page),
+                    None,
                 )
-                image_block = StructuredBlock(
-                    BlockKind.IMAGE,
-                    f"Source image - page {page.page_number}",
-                    page_number=page.page_number,
-                    image_path=str(path),
-                    chapter_id=chapter_id,
-                )
-                if chapter_id:
-                    images_by_chapter.setdefault(chapter_id, []).append(image_block)
-                else:
-                    unmapped_images.append(image_block)
+                if source_page is not None:
+                    chapter_id = _image_chapter_id(project, source_page, semantic.bbox)
+            label = f"Source image - page {semantic.source_page}"
+            image_block = StructuredBlock(
+                BlockKind.IMAGE,
+                label,
+                page_number=semantic.source_page,
+                image_path=str(path),
+                source_id=semantic.occurrence_id,
+                chapter_id=chapter_id,
+            )
+            insertions.setdefault(insertion_index, []).append(image_block)
+            records.append(
+                {
+                    "occurrence_id": semantic.occurrence_id,
+                    "logical_key": semantic.logical_key,
+                    "source_page": semantic.source_page,
+                    "sha256": semantic.digest,
+                    "output_file": str(path.relative_to(output)),
+                    "extension": image.extension,
+                    "classification": semantic.classification.value,
+                    "confidence": semantic.confidence,
+                    "caption": semantic.caption,
+                    "insert_before_block_id": semantic.insert_before_block_id,
+                    "insert_after_block_id": semantic.insert_after_block_id,
+                    "aspect_ratio": semantic.aspect_ratio,
+                }
+            )
 
         blocks: list[StructuredBlock] = []
-        active_chapter: str | None = None
-        for block in base_blocks:
-            if block.chapter_id != active_chapter and block.chapter_id is not None:
-                if active_chapter:
-                    blocks.extend(images_by_chapter.pop(active_chapter, []))
-                active_chapter = block.chapter_id
-            blocks.append(block)
-        if active_chapter:
-            blocks.extend(images_by_chapter.pop(active_chapter, []))
-        for chapter_id in sorted(images_by_chapter, key=lambda value: int(value) if value.isdigit() else 10**9):
-            blocks.extend(images_by_chapter[chapter_id])
-        blocks.extend(unmapped_images)
+        for index in range(len(base_blocks) + 1):
+            blocks.extend(insertions.get(index, []))
+            if index < len(base_blocks):
+                blocks.append(base_blocks[index])
         return blocks, records
+
+
+def _semantic_image_insertion(
+    blocks: list[StructuredBlock],
+    source_model: DocumentModel | None,
+    image: SemanticImage,
+) -> tuple[int, str | None]:
+    source_by_id = {block.id: block for block in source_model.blocks} if source_model else {}
+
+    def find(anchor_id: str | None) -> int | None:
+        if not anchor_id:
+            return None
+        for index, block in enumerate(blocks):
+            if block.source_id == anchor_id:
+                return index
+        source_block = source_by_id.get(anchor_id)
+        if source_block and source_block.text:
+            target = normalize_text(source_block.text)
+            for index, block in enumerate(blocks):
+                candidate = normalize_text(block.text)
+                if block.page_number in {None, image.source_page} and (
+                    candidate == target or target in candidate or candidate in target
+                ):
+                    return index
+        return None
+
+    before = find(image.insert_before_block_id)
+    if before is not None:
+        return before, blocks[before].chapter_id
+    after = find(image.insert_after_block_id)
+    if after is not None:
+        return after + 1, blocks[after].chapter_id
+    parent = find(image.parent_block_id)
+    if parent is not None:
+        return parent + 1, blocks[parent].chapter_id
+    same_page = [
+        index for index, block in enumerate(blocks)
+        if block.page_number == image.source_page
+    ]
+    if same_page:
+        index = same_page[-1]
+        return index + 1, blocks[index].chapter_id
+    return min(1, len(blocks)), None
 
 
 def _image_chapter_id(

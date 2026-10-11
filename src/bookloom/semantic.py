@@ -172,6 +172,8 @@ def _semantic_kind(text: str, block: dict) -> SemanticKind:
         return _SPECIAL_HEADINGS[folded]
     if re.match(r"^(keywords?|मुख्य शब्द)\s*[:：]", text, re.IGNORECASE):
         return SemanticKind.KEYWORDS
+    if re.match(r"^\d+(?:\.\d+)*[.)\-:]?\s+\S+", text) and len(text.split()) <= 14:
+        return SemanticKind.SECTION
     if re.match(r"^(?:[-*•]|\d+[.)])\s+", text):
         return SemanticKind.LIST
     if re.match(r"^(?:figure|fig\.|चित्र)\s*\d+", text, re.IGNORECASE):
