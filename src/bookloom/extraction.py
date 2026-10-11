@@ -11,7 +11,8 @@ from pathlib import Path
 import pymupdf
 from PIL import Image
 
-from .models import ExtractedDocument, ExtractedImage, ExtractedPage
+from .models import ExtractedDocument, ExtractedImage, ExtractedPage, PageType
+from .semantic import classify_page_type
 from .cache import DiskCache
 from .ocr import ocr_image
 
@@ -65,6 +66,7 @@ def extract_pdf(
     metrics: dict[str, float | int] = {
         "pdf_open_seconds": 0.0,
         "native_pages": 0,
+        "mixed_pages": 0,
         "ocr_pages": 0,
         "ocr_cache_hits": 0,
         "native_extraction_seconds": 0.0,
@@ -131,6 +133,15 @@ def extract_pdf(
             image_started = time.perf_counter()
             images = [] if text_only else _extract_images(document, page, index + 1)
             metrics["image_extraction_seconds"] += time.perf_counter() - image_started
+            page_type = classify_page_type(
+                raw_text,
+                images,
+                float(page.rect.width),
+                float(page.rect.height),
+                used_ocr,
+            )
+            if page_type == PageType.MIXED:
+                metrics["mixed_pages"] += 1
             pages.append(
                 ExtractedPage(
                     page_number=index + 1,
@@ -141,7 +152,7 @@ def extract_pdf(
                     images=images,
                     width=float(page.rect.width),
                     height=float(page.rect.height),
-                    method="OCR" if used_ocr else "NATIVE",
+                    method=page_type.value,
                     ocr_cache_hit=cache_hit,
                 )
             )

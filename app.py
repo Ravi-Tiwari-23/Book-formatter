@@ -277,21 +277,23 @@ def _summary(project) -> None:
         st.json(project.performance)
     with st.expander("Document analysis"):
         st.json(project.document_profile.to_dict() if project.document_profile else {})
-    metadata = project.reference_metadata
-    with st.expander("Reference metadata"):
+    metadata = project.metadata
+    with st.expander("Book metadata"):
         st.table(
             {
                 "Field": ["Title", "Author", "DOI", "Publisher", "Edition", "ISBN"],
                 "Detected value": [
                     metadata.title or "Not identified",
-                    metadata.author or "Not identified in supplied reference",
-                    metadata.doi or "Not available in supplied reference",
+                    metadata.author or "Not identified",
+                    metadata.doi or "Not provided",
                     metadata.publisher or "Not identified",
                     metadata.edition or "Not identified",
                     metadata.isbn or "Not identified",
                 ],
             }
         )
+        if project.metadata_findings:
+            st.warning(f"{len(project.metadata_findings)} source/reference metadata conflict(s); source values were retained.")
 
 
 def _review(project) -> None:

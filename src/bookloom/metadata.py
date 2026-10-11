@@ -26,7 +26,7 @@ _EXCLUDED_PERSON_TERMS = re.compile(
 
 
 @dataclass(slots=True)
-class ReferenceMetadata:
+class DocumentMetadata:
     title: str | None = None
     author: str | None = None
     co_author: str | None = None
@@ -38,6 +38,7 @@ class ReferenceMetadata:
     doi: str | None = None
     source_publication: str | None = None
     confidence: dict[str, str] = field(default_factory=dict)
+    provenance: dict[str, str] = field(default_factory=dict)
 
     @property
     def has_information(self) -> bool:
@@ -69,7 +70,25 @@ class ReferenceMetadata:
             "doi": self.doi,
             "source_publication": self.source_publication,
             "confidence": dict(self.confidence),
+            "provenance": dict(self.provenance),
         }
+
+
+ReferenceMetadata = DocumentMetadata
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataFinding:
+    field: str
+    source_value: str
+    reference_value: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataMergeResult:
+    metadata: DocumentMetadata
+    findings: tuple[MetadataFinding, ...]
 
 
 def _lines(document: ExtractedDocument, maximum_pages: int = 12) -> list[str]:
@@ -135,12 +154,12 @@ def _title_candidate(lines: list[str]) -> str | None:
     return max(candidates, default=(0, ""))[1] or None
 
 
-def extract_reference_metadata(document: ExtractedDocument) -> ReferenceMetadata:
-    """Conservatively extract bibliographic facts from the supplied reference only."""
+def extract_document_metadata(document: ExtractedDocument) -> DocumentMetadata:
+    """Conservatively extract bibliographic facts from one supplied document."""
     lines = _lines(document)
     searchable = "\n".join(page.text for page in document.pages)
     pdf_metadata = _pdf_metadata(document)
-    result = ReferenceMetadata()
+    result = DocumentMetadata()
 
     result.title = pdf_metadata.get("title") or _title_candidate(lines)
     if result.title:
@@ -193,7 +212,61 @@ def extract_reference_metadata(document: ExtractedDocument) -> ReferenceMetadata
     return result
 
 
-def reference_information_text(metadata: ReferenceMetadata) -> str:
+def extract_reference_metadata(document: ExtractedDocument) -> DocumentMetadata:
+    """Compatibility wrapper for callers that extract a reference document."""
+
+    return extract_document_metadata(document)
+
+
+def normalize_doi(value: str | None) -> str | None:
+    if not value:
+        return None
+    normalized = re.sub(r"^https?://(?:dx\.)?doi\.org/", "", value.strip(), flags=re.I)
+    normalized = re.sub(r"^doi\s*:\s*", "", normalized, flags=re.I)
+    return normalized.rstrip(".,; ").casefold() or None
+
+
+def merge_metadata(
+    source: DocumentMetadata,
+    reference: DocumentMetadata,
+) -> MetadataMergeResult:
+    """Merge bibliographic facts with source authority and reference fallback."""
+
+    fields = (
+        "title", "author", "co_author", "editor", "publisher", "edition",
+        "publication_year", "isbn", "doi", "source_publication",
+    )
+    merged = DocumentMetadata()
+    findings: list[MetadataFinding] = []
+    for field_name in fields:
+        source_value = getattr(source, field_name)
+        reference_value = getattr(reference, field_name)
+        selected = source_value or reference_value
+        if selected:
+            if field_name == "doi":
+                selected = normalize_doi(selected)
+            setattr(merged, field_name, selected)
+            authority = "source" if source_value else "reference_fallback"
+            merged.provenance[field_name] = authority
+            confidence_source = source if source_value else reference
+            if field_name in confidence_source.confidence:
+                merged.confidence[field_name] = confidence_source.confidence[field_name]
+        if source_value and reference_value:
+            source_normalized = normalize_doi(source_value) if field_name == "doi" else " ".join(source_value.casefold().split())
+            reference_normalized = normalize_doi(reference_value) if field_name == "doi" else " ".join(reference_value.casefold().split())
+            if source_normalized != reference_normalized:
+                findings.append(
+                    MetadataFinding(
+                        field=field_name,
+                        source_value=source_value,
+                        reference_value=reference_value,
+                        reason=f"Source and reference {field_name.replace('_', ' ')} differ; source retained",
+                    )
+                )
+    return MetadataMergeResult(merged, tuple(findings))
+
+
+def reference_information_text(metadata: DocumentMetadata) -> str:
     lines = ["REFERENCE SOURCE"]
     if metadata.title:
         lines.append(f"Reference book: {metadata.title}")
@@ -212,7 +285,8 @@ def reference_information_text(metadata: ReferenceMetadata) -> str:
         lines.append(f"Publication year: {metadata.publication_year}")
     if metadata.isbn:
         lines.append(f"ISBN: {metadata.isbn}")
-    lines.append(f"DOI: {metadata.doi or 'Not available in the supplied reference'}")
+    if metadata.doi:
+        lines.append(f"DOI: {metadata.doi}")
     if metadata.source_publication:
         lines.append(f"Source publication: {metadata.source_publication}")
     return "\n".join(lines)

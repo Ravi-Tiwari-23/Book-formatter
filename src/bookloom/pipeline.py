@@ -19,7 +19,13 @@ from .differences import Difference, DifferenceType, compare_sections
 from .extraction import extract_pdf, file_sha256
 from .filenames import allocate_output_path
 from .matching import match_paragraphs, normalize_text
-from .metadata import ReferenceMetadata, extract_reference_metadata, reference_information_text
+from .metadata import (
+    DocumentMetadata,
+    MetadataFinding,
+    ReferenceMetadata,
+    extract_document_metadata,
+    merge_metadata,
+)
 from .document_analysis import DocumentProfile, analyze_document
 from .integrity import (
     IntegrityReport,
@@ -29,11 +35,12 @@ from .integrity import (
     pdf_body_start_page_index,
     verify_rendered_pdf,
 )
-from .models import BookSection, BlockKind, Confidence, Correction, Decision, DocumentApproval, ExtractedDocument, StructuredBlock
+from .models import BookSection, BlockKind, Confidence, Correction, Decision, DocumentApproval, DocumentModel, ExtractedDocument, StructuredBlock
 from .provenance import pdf_image_fingerprints, verify_image_firewall
 from .rendering import render_book, weasyprint_available
 from .review import apply_decision, default_decision_for, effective_decision, effective_text, finalize_text
 from .sections import SectionMatch, align_sections, detect_document_sections, normalize_title
+from .semantic import build_document_model, document_model_from_structured_blocks
 from .structure import detect_structure
 from .validation import build_corrections
 from .verification import verify_pdf, write_verification_report
@@ -59,6 +66,10 @@ class ValidationProject:
     reference_image_fingerprints: set[str] = field(default_factory=set)
     performance: dict = field(default_factory=dict)
     reference_metadata: ReferenceMetadata = field(default_factory=ReferenceMetadata)
+    source_metadata: DocumentMetadata = field(default_factory=DocumentMetadata)
+    metadata: DocumentMetadata = field(default_factory=DocumentMetadata)
+    metadata_findings: tuple[MetadataFinding, ...] = ()
+    document_model: DocumentModel | None = None
     document_profile: DocumentProfile | None = None
     job_id: str | None = None
     source_upload_name: str | None = None
@@ -197,26 +208,10 @@ def _canonical_blocks(
                 )
                 for unit in canonical_units
             ]
-        if project.reference_metadata.has_information:
-            insertion = 1 if result and result[0].kind == BlockKind.BOOK_TITLE else 0
-            result.insert(
-                insertion,
-                StructuredBlock(
-                    BlockKind.REFERENCE_INFO,
-                    reference_information_text(project.reference_metadata),
-                ),
-            )
         return result
 
     title = project.document_profile.title if project.document_profile else profile.title if profile else project.source.path.stem
     blocks = [StructuredBlock(BlockKind.BOOK_TITLE, title)]
-    if project.reference_metadata.has_information:
-        blocks.append(
-            StructuredBlock(
-                BlockKind.REFERENCE_INFO,
-                reference_information_text(project.reference_metadata),
-            )
-        )
     units_by_chapter: dict[str, list[TextUnit]] = {}
     for unit in canonical_units:
         units_by_chapter.setdefault(unit.chapter_id, []).append(unit)
@@ -278,7 +273,15 @@ def synchronize_renderer_blocks(
     section_numbers: set[int] | None,
 ) -> tuple[list[StructuredBlock], bool]:
     """Repair stale renderer wording from canonical units before QA/rendering."""
-    defaults = _canonical_blocks(project, canonical_units, profile, section_numbers)
+    raw_defaults = _canonical_blocks(project, canonical_units, profile, section_numbers)
+    project.document_model = document_model_from_structured_blocks(
+        project.source.sha256,
+        raw_defaults,
+        page_types=project.document_model.page_types if project.document_model else {},
+        metadata=project.metadata,
+        language=project.document_profile.language if project.document_profile else "english",
+    )
+    defaults = project.document_model.to_structured_blocks()
     if project.structure_override is None:
         return defaults, False
 
@@ -614,7 +617,9 @@ class ProjectPipeline:
         stage_started = time.perf_counter()
         reference_fingerprints = self._fingerprints(reference_path)
         reference_provenance_seconds = time.perf_counter() - stage_started
-        reference_metadata = extract_reference_metadata(reference)
+        source_metadata = extract_document_metadata(source)
+        reference_metadata = extract_document_metadata(reference)
+        metadata_merge = merge_metadata(source_metadata, reference_metadata)
         emit("preparing_review", len(corrections), len(corrections))
         performance = {
             "document_analysis_version": 10,
@@ -669,6 +674,14 @@ class ProjectPipeline:
             reference_image_fingerprints=reference_fingerprints,
             performance=performance,
             reference_metadata=reference_metadata,
+            source_metadata=source_metadata,
+            metadata=metadata_merge.metadata,
+            metadata_findings=metadata_merge.findings,
+            document_model=build_document_model(
+                source,
+                metadata=metadata_merge.metadata,
+                language=source_analysis.language,
+            ),
             protected_pages=source_analysis.cover_pages,
             document_profile=source_analysis,
             job_id=job_id,
@@ -874,12 +887,24 @@ class ProjectPipeline:
             "correction_version": "2.0",
             "preview_only": allow_unresolved_source,
             "document_approval": asdict(project.approval) if project.approval else None,
+            "metadata": project.metadata.to_dict(),
+            "source_metadata": project.source_metadata.to_dict(),
             "reference_metadata": project.reference_metadata.to_dict(),
+            "metadata_conflicts": [asdict(item) for item in project.metadata_findings],
             "document_profile": project.document_profile.to_dict() if project.document_profile else None,
         }
         if project.document_profile:
             (output / "document-analysis.json").write_text(
-                json.dumps({**project.document_profile.to_dict(), "reference_metadata": project.reference_metadata.to_dict()}, ensure_ascii=False, indent=2), encoding="utf-8")
+                json.dumps({
+                    **project.document_profile.to_dict(),
+                    "metadata": project.metadata.to_dict(),
+                    "source_metadata": project.source_metadata.to_dict(),
+                    "reference_metadata": project.reference_metadata.to_dict(),
+                    "page_types": {
+                        str(page): page_type.value
+                        for page, page_type in (project.document_model.page_types if project.document_model else {}).items()
+                    },
+                }, ensure_ascii=False, indent=2), encoding="utf-8")
         manifest_path = output / manifest_name
         manifest_path.write_text(
             json.dumps(manifest_data, ensure_ascii=False, indent=2), encoding="utf-8"

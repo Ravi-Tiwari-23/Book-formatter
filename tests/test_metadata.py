@@ -44,5 +44,5 @@ def test_reference_metadata_never_invents_missing_author_or_doi():
     assert metadata.doi is None
     rendered = reference_information_text(metadata)
     assert "Author: Not identified in the supplied reference" in rendered
-    assert "DOI: Not available in the supplied reference" in rendered
+    assert "DOI:" not in rendered
 

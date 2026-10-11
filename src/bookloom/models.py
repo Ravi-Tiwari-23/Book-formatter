@@ -80,6 +80,28 @@ class BlockKind(str, Enum):
     REFERENCE_INFO = "reference_info"
 
 
+class PageType(str, Enum):
+    NATIVE = "NATIVE"
+    SCANNED = "SCANNED"
+    MIXED = "MIXED"
+
+
+class SemanticKind(str, Enum):
+    TITLE = "title"
+    CHAPTER = "chapter"
+    SECTION = "section"
+    SUBSECTION = "subsection"
+    ABSTRACT = "abstract"
+    KEYWORDS = "keywords"
+    PARAGRAPH = "paragraph"
+    LIST = "list"
+    TABLE = "table"
+    FIGURE = "figure"
+    CAPTION = "caption"
+    CONCLUSION = "conclusion"
+    REFERENCES = "references"
+
+
 @dataclass(slots=True)
 class ExtractedImage:
     page_number: int
@@ -197,6 +219,72 @@ class StructuredBlock:
     include_in_toc: bool = True
     bbox: tuple[float, float, float, float] | None = None
     table_rows: list[list[str]] | None = None
+
+
+@dataclass(slots=True)
+class SemanticBlock:
+    id: str
+    kind: SemanticKind
+    text: str
+    page_number: int
+    order: int
+    bbox: tuple[float, float, float, float] | None = None
+    level: int = 0
+    table_rows: list[list[str]] | None = None
+    image_digest: str | None = None
+    image_path: str | None = None
+    confidence: float = 1.0
+    source_id: str | None = None
+    chapter_id: str | None = None
+    start_new_page: bool = False
+    include_in_toc: bool = False
+
+
+@dataclass(slots=True)
+class DocumentModel:
+    source_sha256: str
+    blocks: list[SemanticBlock]
+    page_types: dict[int, PageType]
+    metadata: Any | None = None
+    language: str = "english"
+
+    def to_structured_blocks(self) -> list[StructuredBlock]:
+        kind_map = {
+            SemanticKind.TITLE: BlockKind.BOOK_TITLE,
+            SemanticKind.CHAPTER: BlockKind.CHAPTER,
+            SemanticKind.SECTION: BlockKind.SECTION,
+            SemanticKind.SUBSECTION: BlockKind.SUBSECTION,
+            SemanticKind.ABSTRACT: BlockKind.SECTION,
+            SemanticKind.KEYWORDS: BlockKind.SUBHEADING,
+            SemanticKind.PARAGRAPH: BlockKind.BODY,
+            SemanticKind.LIST: BlockKind.BULLET_LIST,
+            SemanticKind.TABLE: BlockKind.TABLE,
+            SemanticKind.FIGURE: BlockKind.IMAGE,
+            SemanticKind.CAPTION: BlockKind.CAPTION,
+            SemanticKind.CONCLUSION: BlockKind.SECTION,
+            SemanticKind.REFERENCES: BlockKind.SECTION,
+        }
+        return [
+            StructuredBlock(
+                kind=kind_map[block.kind],
+                text=block.text,
+                level=block.level,
+                page_number=block.page_number,
+                image_path=block.image_path,
+                source_id=block.source_id or block.id,
+                chapter_id=block.chapter_id,
+                confidence=block.confidence,
+                start_new_page=block.start_new_page,
+                table_rows=block.table_rows,
+                include_in_toc=block.include_in_toc or block.kind in {
+                    SemanticKind.CHAPTER,
+                    SemanticKind.SECTION,
+                    SemanticKind.CONCLUSION,
+                    SemanticKind.REFERENCES,
+                },
+            )
+            for block in self.blocks
+        ]
 
 
 @dataclass(slots=True)
