@@ -26,6 +26,7 @@ if getattr(_pipeline_module, "INTEGRITY_QA_VERSION", 1) < 13:
     importlib.reload(_pipeline_module)
 
 from bookloom.blockers import BuildBlockedError
+from bookloom.app_state import initialize_document_state, reset_document_state, workflow_stage
 from bookloom.config import load_book_profile
 from bookloom.integrity import ProductionIntegrityError
 from bookloom.integrity_ui import render_integrity_failure, render_integrity_summary
@@ -51,6 +52,7 @@ from bookloom.review import (
     effective_text,
     finalize_text,
 )
+from bookloom.review_ui import approval_summary, decision_label
 from bookloom.structure import detect_structure
 from bookloom.ui_helpers import (
     approved_text_sha256,
@@ -62,6 +64,11 @@ from bookloom.ui_helpers import (
     finding_label,
     group_review_findings,
     paginate,
+)
+from bookloom.workflow_ui import (
+    friendly_build_error,
+    render_brand_header,
+    render_upload_panel,
 )
 
 
@@ -86,14 +93,7 @@ def _init() -> None:
     existing_build_cache = getattr(existing_pipeline, "build_cache", None)
     if existing_pipeline is None or getattr(existing_build_cache, "version", None) != "build-v14":
         st.session_state.pipeline = ProjectPipeline(WORK / "cache")
-    st.session_state.setdefault("job", None)
-    st.session_state.setdefault("project", None)
-    st.session_state.setdefault("artifacts", None)
-    st.session_state.setdefault("text_finalized", False)
-    st.session_state.setdefault("finalized_text_sha256", None)
-    st.session_state.setdefault("integrity_report", None)
-    st.session_state.setdefault("integrity_report_key", None)
-    st.session_state.setdefault("document_approval", None)
+    initialize_document_state(st.session_state)
     st.session_state.profile = None
     project = st.session_state.get("project")
     if project is not None and project.__class__ is not ValidationProject:
@@ -163,6 +163,9 @@ def _system_status() -> None:
     tesseract = find_tesseract(st.session_state.get("tesseract_path") or None)
     weasy_ok, _ = weasyprint_available()
     with st.sidebar:
+        st.title("Bookloom")
+        st.caption("PDF production workspace")
+        st.divider()
         st.subheader("System status")
         st.write("Tesseract OCR", "✅" if tesseract else "⚠️ not found")
         st.write("WeasyPrint", "✅" if weasy_ok else "⚠️ GTK/Pango missing")
@@ -189,39 +192,24 @@ def _system_status() -> None:
 
 
 def _upload_and_analyze() -> None:
-    st.header("Steps 1–3 · Upload and analyze")
-    left, right = st.columns(2)
-    with left:
-        source_upload = st.file_uploader("Source PDF", type="pdf", key="source")
-    with right:
-        reference_upload = st.file_uploader("Reference book PDF", type="pdf", key="reference")
-    st.text_input(
-        "Optional Tesseract executable path",
-        key="tesseract_path",
-        placeholder=r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-    )
-    if st.button("Start validation", type="primary", disabled=not (source_upload and reference_upload)):
+    request = render_upload_panel()
+    source_upload = request.source
+    reference_upload = request.reference
+    if request.submitted and source_upload and reference_upload:
         source_path = _save_upload(source_upload, "source")
         reference_path = _save_upload(reference_upload, "reference")
+        reset_document_state(st.session_state)
         job = create_job(
             source_upload.name,
             source_path,
             reference_upload.name,
             reference_path,
             ProcessingOptions(
-                tesseract_path=st.session_state.tesseract_path or None
+                tesseract_path=request.tesseract_path or None,
+                preserve_source_pages=(),
             ),
         )
         st.session_state.job = job
-        for key in (
-            "project",
-            "artifacts",
-            "text_finalized",
-            "finalized_text_sha256",
-            "integrity_report",
-            "integrity_report_key",
-        ):
-            st.session_state[key] = None if key != "text_finalized" else False
         with st.status("Extracting and comparing PDFs…", expanded=True) as status:
             progress_bar = st.progress(0.0)
             progress_text = st.empty()
@@ -242,13 +230,15 @@ def _upload_and_analyze() -> None:
             project = st.session_state.pipeline.analyze(
                 source_path,
                 reference_path,
-                tesseract_path=st.session_state.tesseract_path or None,
+                tesseract_path=request.tesseract_path or None,
                 job_id=job.id,
                 source_upload_name=job.source_upload_name,
                 reference_upload_name=job.reference_upload_name,
                 progress=update_progress,
             )
             st.session_state.project = project
+            if request.preserve_original_cover and project.document_profile:
+                project.protected_pages = list(project.document_profile.cover_pages)
             invalidate_approved_state(
                 st.session_state, project, clear_structure=True
             )
@@ -257,7 +247,7 @@ def _upload_and_analyze() -> None:
 
 
 def _summary(project) -> None:
-    st.header("Step 4 · Compare")
+    st.header("Analysis summary")
     counts = correction_counts(project.corrections)
     values = [
         ("Source sections detected", len(project.source_sections)),
@@ -274,9 +264,11 @@ def _summary(project) -> None:
         for column, (label, value) in zip(st.columns(4), values[start:start + 4]):
             column.metric(label, value)
     with st.expander("Performance diagnostics"):
-        st.json(project.performance)
+        if st.checkbox("Load performance details", key="load-performance-diagnostics"):
+            st.json(project.performance)
     with st.expander("Document analysis"):
-        st.json(project.document_profile.to_dict() if project.document_profile else {})
+        if st.checkbox("Load document analysis", key="load-document-analysis"):
+            st.json(project.document_profile.to_dict() if project.document_profile else {})
     metadata = project.metadata
     with st.expander("Book metadata"):
         st.table(
@@ -296,6 +288,45 @@ def _summary(project) -> None:
             st.warning(f"{len(project.metadata_findings)} source/reference metadata conflict(s); source values were retained.")
 
 
+@st.dialog("Approve the complete document")
+def _approval_dialog(project) -> None:
+    summary = approval_summary(project.corrections)
+    st.write(
+        "This single approval accepts the effective text for the whole book. "
+        "Untouched risky findings keep the source wording."
+    )
+    columns = st.columns(3)
+    columns[0].metric("Findings", summary["findings"])
+    columns[1].metric("Safe defaults", summary["defaults"])
+    columns[2].metric("Your overrides", summary["overrides"])
+    if summary["attention"]:
+        st.warning(
+            f"{summary['attention']} low-confidence or sensitive finding(s) keep source wording unless overridden."
+        )
+    confirmed = st.checkbox(
+        "I reviewed the summary and approve the effective text for this document.",
+        key="confirm-document-approval",
+    )
+    if st.button("Confirm final approval", type="primary", disabled=not confirmed, width="stretch"):
+        try:
+            approval = approve_document(project.corrections)
+        except ValueError as error:
+            st.error(friendly_build_error(error))
+            return
+        project.approval = approval
+        st.session_state.document_approval = approval
+        st.session_state.text_finalized = True
+        st.session_state.finalized_text_sha256 = approval.effective_text_sha256
+        st.session_state.artifacts = None
+        job = st.session_state.get("job")
+        if job is not None:
+            job.approval_state = {
+                "approved": True,
+                "text_sha256": approval.effective_text_sha256,
+            }
+        st.rerun()
+
+
 def _review(project) -> None:
     st.header("Review and approve")
     st.caption(
@@ -312,7 +343,7 @@ def _review(project) -> None:
     if not groups:
         st.info("No findings match this view. The current safe defaults remain in effect.")
     for group_label, items in groups.items():
-        with st.expander(f"{group_label} · {len(items)} finding(s)"):
+        with st.expander(f"{group_label} · {len(items)} finding(s)", expanded=False):
             for item in items:
                 st.markdown(f"**{finding_label(item.category)} · {item.severity}**")
                 left, right = st.columns(2)
@@ -328,13 +359,7 @@ def _review(project) -> None:
                     choices,
                     index=choices.index(explicit) if explicit in choices else 0,
                     key=f"override-{item.id}",
-                    format_func=lambda value: "Use safe default" if value is None else {
-                        Decision.ACCEPT: "Accept suggestion",
-                        Decision.REJECT: "Keep source (reject)",
-                        Decision.EDIT: "Use my edit",
-                        Decision.KEEP_SOURCE: "Keep source",
-                        Decision.USE_REFERENCE: "Use reference text",
-                    }[value],
+                    format_func=decision_label,
                 )
                 manual = None
                 if selected == Decision.EDIT:
@@ -358,28 +383,13 @@ def _review(project) -> None:
                 st.caption(f"Effective choice: {effective_decision(item).value.replace('_', ' ').title()}")
                 st.divider()
 
-    defaults = sum(not (item.user_decision or item.decision) for item in project.corrections)
-    overrides = len(project.corrections) - defaults
-    st.info(f"Approval summary: {defaults} safe defaults · {overrides} overrides")
-    confirmed = st.checkbox(
-        "I reviewed the findings and approve the effective text for the entire document.",
-        key="confirm-document-approval",
-    )
-    if st.button("Approve document", type="primary", disabled=not confirmed):
-        try:
-            approval = approve_document(project.corrections)
-        except ValueError as error:
-            st.error(str(error))
-        else:
-            project.approval = approval
-            st.session_state.document_approval = approval
-            st.session_state.text_finalized = True
-            st.session_state.finalized_text_sha256 = approval.effective_text_sha256
-            st.session_state.artifacts = None
-            job = st.session_state.get("job")
-            if job is not None:
-                job.approval_state = {"approved": True, "text_sha256": approval.effective_text_sha256}
-            st.success("Document approved. You can now review structure and build the final book.")
+    summary = approval_summary(project.corrections)
+    st.info(f"Approval summary: {summary['defaults']} safe defaults · {summary['overrides']} overrides")
+    if project.approval is None:
+        if st.button("Review and approve document", type="primary", width="stretch"):
+            _approval_dialog(project)
+    else:
+        st.success("Document approved. Any new override will automatically invalidate this approval.")
 
 
 def _structure(project) -> None:
@@ -475,7 +485,7 @@ def _build(project) -> None:
         )
         with st.status("Building professional book PDF…", expanded=True) as status:
             try:
-                st.write("Rendering TRUELOGER layout, TOC, page numbers, and bookmarks")
+                st.write("Rendering the A4 Reading Edition, contents, page numbers, and bookmarks")
                 artifacts = st.session_state.pipeline.build(
                     project,
                     build_dir,
@@ -510,7 +520,11 @@ def _build(project) -> None:
                 return
             except BuildBlockedError as error:
                 status.update(label="Production build blocked", state="error")
-                st.error(str(error))
+                st.error(friendly_build_error(error))
+                return
+            except (RuntimeError, ValueError) as error:
+                status.update(label="Build needs attention", state="error")
+                st.error(friendly_build_error(error))
                 return
         st.rerun()
 
@@ -569,7 +583,7 @@ def _apply_integrity_action(project, action: dict[str, str]) -> None:
 def _downloads(artifacts) -> None:
     manifest = __import__("json").loads(artifacts.manifest.read_text(encoding="utf-8"))
     preview_only = bool(manifest.get("preview_only"))
-    st.header("Preview download" if preview_only else "Step 10 · Download final artifacts")
+    st.header("Preview ready" if preview_only else "Your book is ready")
     if preview_only:
         st.warning("PREVIEW ONLY — unresolved passages use current source text. This is not a final book.")
     verification = __import__("json").loads(
@@ -577,24 +591,36 @@ def _downloads(artifacts) -> None:
     )
     if verification.get("text_integrity"):
         render_integrity_summary(verification["text_integrity"])
-    st.pdf(
-        artifacts.pdf,
-        height=720,
-        alt="Preview of the generated professional book PDF",
-    )
-    for label, path, mime in [
-        ("Preview PDF" if preview_only else "Final PDF", artifacts.pdf, "application/pdf"),
-        ("Validation report", artifacts.validation_report, "text/markdown"),
-        ("Corrections JSON", artifacts.corrections, "application/json"),
-        ("Final approved text", artifacts.approved_text, "text/markdown"),
-        ("Final approved text JSON", artifacts.approved_text_json, "application/json"),
-        ("Reference text JSON", artifacts.reference_text_json, "application/json"),
-        ("Source structure JSON", artifacts.source_structure_json, "application/json"),
-        ("Build manifest", artifacts.manifest, "application/json"),
-        ("Verification report", artifacts.verification_report, "application/json"),
-        ("Performance report", artifacts.performance_report, "application/json"),
-    ]:
-        st.download_button(f"Download {label}", path.read_bytes(), path.name, mime)
+    with st.container(border=True):
+        st.download_button(
+            f"Download {artifacts.pdf.name}",
+            artifacts.pdf.read_bytes(),
+            artifacts.pdf.name,
+            "application/pdf",
+            type="primary",
+            width="stretch",
+        )
+        if st.button("Load PDF preview", width="stretch"):
+            st.session_state.pdf_preview_loaded = True
+        if st.session_state.get("pdf_preview_loaded"):
+            st.pdf(
+                artifacts.pdf,
+                height=720,
+                alt="Preview of the generated professional book PDF",
+            )
+    with st.expander("Audit files and diagnostics"):
+        for label, path, mime in [
+            ("Validation report", artifacts.validation_report, "text/markdown"),
+            ("Corrections JSON", artifacts.corrections, "application/json"),
+            ("Final approved text", artifacts.approved_text, "text/markdown"),
+            ("Final approved text JSON", artifacts.approved_text_json, "application/json"),
+            ("Reference text JSON", artifacts.reference_text_json, "application/json"),
+            ("Source structure JSON", artifacts.source_structure_json, "application/json"),
+            ("Build manifest", artifacts.manifest, "application/json"),
+            ("Verification report", artifacts.verification_report, "application/json"),
+            ("Performance report", artifacts.performance_report, "application/json"),
+        ]:
+            st.download_button(f"Download {label}", path.read_bytes(), path.name, mime)
 
 
 def main() -> None:
@@ -606,8 +632,12 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
     _init()
-    st.title("Bookloom")
-    st.caption("Source-faithful PDF review and professional book production")
+    render_brand_header(
+        workflow_stage(
+            st.session_state.get("project"),
+            st.session_state.get("artifacts"),
+        )
+    )
     _system_status()
     _upload_and_analyze()
     project = st.session_state.project
