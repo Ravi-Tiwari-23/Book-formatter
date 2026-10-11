@@ -1,0 +1,12 @@
+.venv/
+.cache/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.egg-info/
+work/
+output/
+tmp/
+.superpowers/
+InstallationLog.txt
+
