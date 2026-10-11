@@ -6,6 +6,7 @@ import re
 from .matching import MatchCategory, PassageMatch, normalize_text
 from .grammar import validate_grammar
 from .models import Confidence, Correction, Decision, ReviewStatus
+from .review import default_decision_for
 
 
 _CLEAR_RULES = {
@@ -101,9 +102,9 @@ def build_corrections(matches: list[PassageMatch], protected_terms: set[str]) ->
                 category=match.category.value,
                 review_required=review_required,
             )
+        correction.default_decision = default_decision_for(correction)
         if match.category in {MatchCategory.EXACT_MATCH, MatchCategory.SAFE_MATCH}:
             correction.status = ReviewStatus.APPROVED
-            correction.decision = Decision.KEEP_SOURCE
             correction.final_text = match.source_text
         corrections.append(correction)
     return corrections

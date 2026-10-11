@@ -44,7 +44,13 @@ from bookloom.ocr import find_tesseract
 from bookloom.pipeline import ProjectPipeline, ValidationProject, proposed_structure
 from bookloom.preview import render_page_preview
 from bookloom.rendering import weasyprint_available
-from bookloom.review import finalize_text
+from bookloom.review import (
+    approve_document,
+    clear_override,
+    effective_decision,
+    effective_text,
+    finalize_text,
+)
 from bookloom.structure import detect_structure
 from bookloom.ui_helpers import (
     approved_text_sha256,
@@ -52,6 +58,9 @@ from bookloom.ui_helpers import (
     current_integrity_report,
     finalization_is_current,
     invalidate_approved_state,
+    filter_review_findings,
+    finding_label,
+    group_review_findings,
     paginate,
 )
 
@@ -84,6 +93,7 @@ def _init() -> None:
     st.session_state.setdefault("finalized_text_sha256", None)
     st.session_state.setdefault("integrity_report", None)
     st.session_state.setdefault("integrity_report_key", None)
+    st.session_state.setdefault("document_approval", None)
     st.session_state.profile = None
     project = st.session_state.get("project")
     if project is not None and project.__class__ is not ValidationProject:
@@ -285,158 +295,98 @@ def _summary(project) -> None:
 
 
 def _review(project) -> None:
-    st.header("Step 5 · Review corrections")
-    pending = sum(item.status == ReviewStatus.PENDING for item in project.corrections)
-    st.progress((len(project.corrections) - pending) / max(1, len(project.corrections)))
-    st.caption(f"{pending} passages still need a decision. No text is formatted before all decisions are locked.")
-    filter_left, filter_right = st.columns(2)
-    status_filter = filter_left.selectbox(
-        "Status filter", ["All", *[status.value for status in ReviewStatus]], key="review-status-filter"
+    st.header("Review and approve")
+    st.caption(
+        "Bookloom has applied conservative defaults. Open only the findings you want to change; overrides save automatically."
     )
-    categories = sorted({item.category for item in project.corrections})
-    category_filter = filter_right.selectbox(
-        "Type filter", ["All", *categories], key="review-category-filter"
-    )
-
-    def filtered(items):
-        return [
-            item
-            for item in items
-            if (status_filter == "All" or item.status.value == status_filter)
-            and (category_filter == "All" or item.category == category_filter)
-        ]
-
-    review_tab, safe_tab = st.tabs(["Needs review", "Resolved / safe"])
-
-    def render_items(items, container, key_prefix):
-        with container:
-            items = filtered(items)
-            if not items:
-                st.info("No items in this category.")
-                return
-            _, total_pages = paginate(items, page_number=1, page_size=25)
-            page_number = st.selectbox(
-                "Review page",
-                range(1, total_pages + 1),
-                key=f"{key_prefix}-page",
-                format_func=lambda value: f"Page {value} of {total_pages}",
-            )
-            visible, _ = paginate(items, page_number=page_number, page_size=25)
-            st.caption(f"Showing {len(visible)} of {len(items)} passages (maximum 25 per page).")
-            for index, item in enumerate(visible):
-                section = f"Section {item.source_section}" if item.source_section else "Front matter"
-                state = "✓ reviewed" if item.status != ReviewStatus.PENDING else item.confidence.value
-                with st.expander(f"{section} · page {item.source_page} · {item.category} · {state}", expanded=index < 2 and pending > 0):
-                    left, right = st.columns(2)
-                    left.markdown("**Source**")
-                    left.write(item.source_text)
-                    right.markdown("**Reference (text only)**")
-                    right.write(item.reference_text or "No reliable reference match")
-                    st.markdown("**Suggestion**")
-                    st.write(item.suggested_text)
-                    st.caption(f"{item.reason} · confidence {item.confidence.value}")
-                    preview_left, preview_right = st.columns(2)
-                    source_preview_key = f"source-preview-{item.id}"
-                    if preview_left.button("Load source page preview", key=f"load-{source_preview_key}"):
-                        result = render_page_preview(
-                            project.source.path,
-                            item.source_page,
-                            cache=st.session_state.pipeline.preview_cache,
-                            dpi=120,
-                        )
-                        project.performance["preview_render_seconds"] = project.performance.get(
-                            "preview_render_seconds", 0.0
-                        ) + result.render_seconds
-                        project.performance["preview_cache_hits"] = project.performance.get(
-                            "preview_cache_hits", 0
-                        ) + int(result.cache_hit)
-                        st.session_state[source_preview_key] = str(result.path)
-                    if source_preview_key in st.session_state:
-                        preview_left.image(st.session_state[source_preview_key], caption=f"Source page {item.source_page}")
-                    if item.reference_page:
-                        reference_preview_key = f"reference-preview-{item.id}"
-                        if preview_right.button("Load reference page preview", key=f"load-{reference_preview_key}"):
-                            result = render_page_preview(
-                                project.reference.path,
-                                item.reference_page,
-                                cache=st.session_state.pipeline.preview_cache,
-                                dpi=120,
-                            )
-                            project.performance["preview_render_seconds"] = project.performance.get(
-                                "preview_render_seconds", 0.0
-                            ) + result.render_seconds
-                            project.performance["preview_cache_hits"] = project.performance.get(
-                                "preview_cache_hits", 0
-                            ) + int(result.cache_hit)
-                            st.session_state[reference_preview_key] = str(result.path)
-                        if reference_preview_key in st.session_state:
-                            preview_right.image(
-                                st.session_state[reference_preview_key],
-                                caption=f"Reference page {item.reference_page}",
-                            )
-                    if item.review_required:
-                        st.warning("Manual review required; reference wording is not automatically trusted.")
-                    options = list(Decision)
-                    default = options.index(item.decision) if item.decision else 0
-                    decision_value = st.selectbox(
-                        "Decision",
-                        options,
-                        index=default,
-                        key=f"decision-{item.id}",
-                        format_func=lambda value: {
-                            Decision.ACCEPT: "Accept suggestion",
-                            Decision.REJECT: "Reject",
-                            Decision.EDIT: "Edit",
-                            Decision.KEEP_SOURCE: "Use Source",
-                            Decision.USE_REFERENCE: "Use Reference",
-                        }[value],
-                    )
+    view = st.segmented_control(
+        "Review view",
+        ["All", "Needs attention", "Low confidence", "Changed", "Reviewed"],
+        default="Needs attention",
+        key="review-view",
+    ) or "Needs attention"
+    visible = filter_review_findings(project.corrections, view)
+    groups = group_review_findings(visible)
+    if not groups:
+        st.info("No findings match this view. The current safe defaults remain in effect.")
+    for group_label, items in groups.items():
+        with st.expander(f"{group_label} · {len(items)} finding(s)"):
+            for item in items:
+                st.markdown(f"**{finding_label(item.category)} · {item.severity}**")
+                left, right = st.columns(2)
+                left.caption("Source")
+                left.write(item.source_text or "No source passage")
+                right.caption("Suggested result")
+                right.write(item.suggested_text or item.source_text or "Keep source unchanged")
+                st.caption(f"{item.reason} · confidence {item.confidence.value}")
+                choices = [None, *list(Decision)]
+                explicit = item.user_decision or item.decision
+                selected = st.selectbox(
+                    "Override",
+                    choices,
+                    index=choices.index(explicit) if explicit in choices else 0,
+                    key=f"override-{item.id}",
+                    format_func=lambda value: "Use safe default" if value is None else {
+                        Decision.ACCEPT: "Accept suggestion",
+                        Decision.REJECT: "Keep source (reject)",
+                        Decision.EDIT: "Use my edit",
+                        Decision.KEEP_SOURCE: "Keep source",
+                        Decision.USE_REFERENCE: "Use reference text",
+                    }[value],
+                )
+                manual = None
+                if selected == Decision.EDIT:
                     manual = st.text_area(
-                        "Final wording (used only for Edit)",
-                        value=item.final_text if item.decision == Decision.EDIT else item.suggested_text,
+                        "Final wording",
+                        value=item.manual_text or item.final_text or item.suggested_text,
                         key=f"manual-{item.id}",
                     )
-                    if st.button("Save decision", key=f"save-{item.id}"):
-                        decision = decision_value
-                        project.decide(item.id, decision, manual if decision == Decision.EDIT else None)
-                        invalidate_approved_state(
-                            st.session_state, project, clear_structure=True
-                        )
-                        st.rerun()
+                if selected != explicit or (
+                    selected == Decision.EDIT and (manual or "").strip() != (item.manual_text or "").strip()
+                ):
+                    if selected is None:
+                        for index, candidate in enumerate(project.corrections):
+                            if candidate.id == item.id:
+                                project.corrections[index] = clear_override(candidate)
+                                break
+                    elif selected != Decision.EDIT or (manual or "").strip():
+                        project.decide(item.id, selected, manual if selected == Decision.EDIT else None)
+                    invalidate_approved_state(st.session_state, project, clear_structure=True)
+                    st.toast("Override saved")
+                st.caption(f"Effective choice: {effective_decision(item).value.replace('_', ' ').title()}")
+                st.divider()
 
-    render_items(
-        [item for item in project.corrections if item.status == ReviewStatus.PENDING],
-        review_tab,
-        "needs-review",
+    defaults = sum(not (item.user_decision or item.decision) for item in project.corrections)
+    overrides = len(project.corrections) - defaults
+    st.info(f"Approval summary: {defaults} safe defaults · {overrides} overrides")
+    confirmed = st.checkbox(
+        "I reviewed the findings and approve the effective text for the entire document.",
+        key="confirm-document-approval",
     )
-    render_items(
-        [item for item in project.corrections if item.status != ReviewStatus.PENDING],
-        safe_tab,
-        "resolved",
-    )
+    if st.button("Approve document", type="primary", disabled=not confirmed):
+        try:
+            approval = approve_document(project.corrections)
+        except ValueError as error:
+            st.error(str(error))
+        else:
+            project.approval = approval
+            st.session_state.document_approval = approval
+            st.session_state.text_finalized = True
+            st.session_state.finalized_text_sha256 = approval.effective_text_sha256
+            st.session_state.artifacts = None
+            job = st.session_state.get("job")
+            if job is not None:
+                job.approval_state = {"approved": True, "text_sha256": approval.effective_text_sha256}
+            st.success("Document approved. You can now review structure and build the final book.")
 
 
 def _structure(project) -> None:
-    pending = sum(item.status == ReviewStatus.PENDING for item in project.corrections)
-    st.header("Steps 6–7 · Finalize text and review structure")
-    if pending:
-        st.info("Complete every meaningful correction decision to enable Finalize Approved Text.")
+    st.header("Structure")
+    if project.approval is None or not finalization_is_current(st.session_state, project.corrections):
+        st.info("Approve the document once to unlock structure and final production.")
         return
     approved = finalize_text(project.corrections)
-    finalized = finalization_is_current(st.session_state, project.corrections)
-    st.session_state.text_finalized = finalized
-    if not finalized:
-        if st.button("Finalize Approved Text", type="primary"):
-            st.session_state.text_finalized = True
-            st.session_state.finalized_text_sha256 = approved_text_sha256(
-                project.corrections
-            )
-            st.session_state.artifacts = None
-            st.session_state.integrity_report = None
-            st.session_state.integrity_report_key = None
-            st.rerun()
-        return
-    st.success("Approved text finalized. Final book generation is enabled.")
+    st.success("Document approval is current. Final book generation is enabled.")
     st.download_button("Download approved text", approved, "final-approved-text.md", "text/markdown")
     blocks = project.structure_override or proposed_structure(
         project, st.session_state.profile
@@ -511,8 +461,7 @@ def _build(project) -> None:
             type="primary",
             disabled=not finalization_is_current(
                 st.session_state, project.corrections
-            )
-            or bool(any(item.status == ReviewStatus.PENDING for item in project.corrections)),
+            ) or project.approval is None,
         )
     if preview_clicked or production_clicked:
         job = st.session_state.get("job")

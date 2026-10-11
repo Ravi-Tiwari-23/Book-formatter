@@ -1,5 +1,3 @@
-import pytest
-
 from bookloom.matching import MatchCategory, PassageMatch, match_paragraphs
 from bookloom.models import Decision, ReviewStatus
 from bookloom.review import apply_decision, finalize_text
@@ -56,8 +54,7 @@ def test_manual_edit_becomes_authoritative_final_text():
     assert finalize_text([edited]) == "मान्य पाठ"
 
 
-def test_final_text_cannot_be_created_with_pending_reviews():
+def test_untouched_review_uses_its_conservative_default():
     correction = build_corrections([_match("गलत", "सही")], protected_terms=set())[0]
-    with pytest.raises(ValueError, match="pending"):
-        finalize_text([correction])
+    assert finalize_text([correction]) == correction.source_text
 

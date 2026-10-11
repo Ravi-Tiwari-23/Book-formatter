@@ -190,7 +190,7 @@ def test_reference_image_firewall_rejects_reference_only_asset():
         )
 
 
-def test_production_build_is_blocked_until_33_sections_and_reviews_resolved():
+def test_production_build_uses_safe_review_defaults_but_blocks_structural_issues():
     correction = Correction(
         id="x",
         source_text="source",
@@ -215,6 +215,6 @@ def test_production_build_is_blocked_until_33_sections_and_reviews_resolved():
             fonts_ok=True,
         )
     assert "missing remedy sections" in str(error.value)
-    assert "unresolved review items" in str(error.value)
+    assert "unresolved review items" not in str(error.value)
     assert "protected TRUELOGER assets" in str(error.value)
 

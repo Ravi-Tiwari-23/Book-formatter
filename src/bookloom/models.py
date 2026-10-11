@@ -143,6 +143,9 @@ class Correction:
     review_required: bool = False
     source_section: int | None = None
     reference_section: int | None = None
+    default_decision: Decision | None = None
+    user_decision: Decision | None = None
+    manual_text: str | None = None
 
     @property
     def correction_state(self) -> str:
@@ -152,8 +155,32 @@ class Correction:
             return "LIKELY_CORRECTION"
         return "REQUIRES_REVIEW"
 
+    @property
+    def requires_manual_action(self) -> bool:
+        chosen = self.user_decision or self.decision or self.default_decision
+        return chosen == Decision.EDIT and not (self.manual_text or self.final_text or "").strip()
+
+    @property
+    def severity(self) -> str:
+        if self.confidence == Confidence.LOW or self.review_required:
+            return "Needs attention"
+        if self.confidence == Confidence.MEDIUM:
+            return "Review suggested"
+        return "Safe"
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentApproval:
+    approved_at_utc: str
+    policy_version: str
+    finding_count: int
+    default_count: int
+    override_count: int
+    edit_count: int
+    effective_text_sha256: str
 
 
 @dataclass(slots=True)

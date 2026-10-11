@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from collections.abc import Callable
@@ -29,10 +29,10 @@ from .integrity import (
     pdf_body_start_page_index,
     verify_rendered_pdf,
 )
-from .models import BookSection, BlockKind, Confidence, Correction, Decision, ExtractedDocument, StructuredBlock
+from .models import BookSection, BlockKind, Confidence, Correction, Decision, DocumentApproval, ExtractedDocument, StructuredBlock
 from .provenance import pdf_image_fingerprints, verify_image_firewall
 from .rendering import render_book, weasyprint_available
-from .review import apply_decision, finalize_text
+from .review import apply_decision, default_decision_for, effective_decision, effective_text, finalize_text
 from .sections import SectionMatch, align_sections, detect_document_sections, normalize_title
 from .structure import detect_structure
 from .validation import build_corrections
@@ -63,6 +63,7 @@ class ValidationProject:
     job_id: str | None = None
     source_upload_name: str | None = None
     reference_upload_name: str | None = None
+    approval: DocumentApproval | None = None
 
     def decide(self, correction_id: str, decision: Decision, manual_text: str | None = None) -> None:
         for index, correction in enumerate(self.corrections):
@@ -109,7 +110,7 @@ def canonical_text_units(
                 entries = [
                     (
                         item.id,
-                        item.final_text or item.source_text,
+                        effective_text(item),
                         item.source_text,
                         item.source_page,
                     )
@@ -145,7 +146,7 @@ def canonical_text_units(
     for correction in project.corrections:
         if section_numbers is not None and correction.source_section not in section_numbers:
             continue
-        text = correction.final_text or correction.source_text
+        text = effective_text(correction)
         if not text or not text.strip():
             continue
         chapter_id = (
@@ -872,6 +873,7 @@ class ProjectPipeline:
             "matched_sections": sum(match.reference is not None for match in project.section_matches),
             "correction_version": "2.0",
             "preview_only": allow_unresolved_source,
+            "document_approval": asdict(project.approval) if project.approval else None,
             "reference_metadata": project.reference_metadata.to_dict(),
             "document_profile": project.document_profile.to_dict() if project.document_profile else None,
         }
@@ -1066,14 +1068,16 @@ def _correction_json(item: Correction) -> dict:
         "source_text": item.source_text,
         "reference_text": item.reference_text,
         "suggestion": item.suggested_text,
-        "final_approved_text": item.final_text,
+        "final_approved_text": effective_text(item),
         "source_page": item.source_page,
         "reference_page": item.reference_page,
         "confidence": item.confidence.value,
         "reason": item.reason,
         "category": item.category,
         "status": item.status.value,
-        "decision": item.decision.value if item.decision else None,
+        "default_decision": (item.default_decision or default_decision_for(item)).value,
+        "user_decision": item.user_decision.value if item.user_decision else None,
+        "decision": effective_decision(item).value,
         "review_required": item.review_required,
         "source_section": item.source_section,
         "reference_section": item.reference_section,
@@ -1127,6 +1131,7 @@ def _missing_content_corrections(
                 review_required=True,
                 source_section=source_section,
                 reference_section=reference_section,
+                default_decision=Decision.KEEP_SOURCE,
             )
         )
     return result
@@ -1181,7 +1186,7 @@ def _approved_text_json(project: ValidationProject) -> dict:
     sections: list[dict] = []
     for section in project.source_sections:
         approved = [
-            item.final_text or item.source_text
+            effective_text(item)
             for item in project.corrections
             if item.source_section == section.number
         ]
@@ -1245,10 +1250,10 @@ def _validation_report(project: ValidationProject) -> str:
                 "",
                 f"- Source: {item.source_text}",
                 f"- Reference: {item.reference_text or '(no reliable match)'}",
-                f"- Final: {item.final_text or '(pending)'}",
+                f"- Final: {effective_text(item)}",
                 f"- Reason: {item.reason}",
                 f"- Confidence: {item.confidence.value}",
-                f"- Decision: {item.decision.value if item.decision else 'PENDING'}",
+                f"- Decision: {effective_decision(item).value}",
             ]
         )
     return "\n".join(lines) + "\n"

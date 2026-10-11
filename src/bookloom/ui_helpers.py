@@ -5,7 +5,8 @@ import hashlib
 from collections.abc import MutableMapping
 from typing import Any, TypeVar, TYPE_CHECKING
 
-from .models import ReviewStatus
+from .models import Confidence, ReviewStatus
+from .review import effective_decision, effective_text
 
 if TYPE_CHECKING:
     from .models import Correction
@@ -42,13 +43,18 @@ def correction_counts(values) -> dict[str, int]:
         "grammar": grammar,
         "meaningful": len(values) - exact - safe,
         "needs_manual_review": sum(
-            item.status == ReviewStatus.PENDING for item in values
+            getattr(item, "severity", None) == "Needs attention"
+            or (
+                not hasattr(item, "severity")
+                and getattr(item, "status", None) == ReviewStatus.PENDING
+            )
+            for item in values
         ),
     }
 
 
 def approved_text_sha256(corrections: list["Correction"]) -> str:
-    approved = "\n\n".join(item.final_text or item.source_text for item in corrections)
+    approved = "\n\n".join(effective_text(item) for item in corrections)
     return hashlib.sha256(approved.encode("utf-8")).hexdigest()
 
 
@@ -70,8 +76,34 @@ def invalidate_approved_state(
     state["artifacts"] = None
     state["integrity_report"] = None
     state["integrity_report_key"] = None
+    state["document_approval"] = None
+    project.approval = None
     if clear_structure:
         project.structure_override = None
+
+
+def finding_label(category: str) -> str:
+    return category.replace("_", " ").strip().capitalize()
+
+
+def group_review_findings(values: list["Correction"]) -> dict[str, list["Correction"]]:
+    grouped: dict[str, list["Correction"]] = {}
+    for item in values:
+        section = f"Section {item.source_section}" if item.source_section is not None else "Front matter"
+        grouped.setdefault(f"{section} · page {item.source_page}", []).append(item)
+    return grouped
+
+
+def filter_review_findings(values: list["Correction"], view: str) -> list["Correction"]:
+    if view == "Needs attention":
+        return [item for item in values if item.severity == "Needs attention"]
+    if view == "Low confidence":
+        return [item for item in values if item.confidence == Confidence.LOW]
+    if view == "Changed":
+        return [item for item in values if effective_text(item) != item.source_text]
+    if view == "Reviewed":
+        return [item for item in values if item.user_decision or item.decision]
+    return list(values)
 
 
 def current_integrity_report(
