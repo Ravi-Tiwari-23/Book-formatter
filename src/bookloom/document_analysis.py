@@ -39,10 +39,6 @@ class DocumentProfile:
 
     def style(self, base: dict) -> dict:
         result = dict(base)
-        result["page_size"] = f"{self.width_pt}pt {self.height_pt}pt"
-        result["page_dimensions_pt"] = (self.width_pt, self.height_pt)
-        colors = {"classic_book": "#563d2c", "modern_reference": "#24475c", "traditional": "#7a3e12", "minimal": "#333333"}
-        result["accent_color"] = colors[self.style_variant]
         result["style_variant"] = self.style_variant
         result["language"] = "hi" if self.language in {"hindi", "mixed"} else "en"
         return result

@@ -65,6 +65,7 @@ def verify_pdf(
     orphan_heading_pages: list[int] = []
     toc_invalid_targets: list[int] = []
     toc_page_number_mismatches: list[dict[str, Any]] = []
+    chapter_top_violations: list[dict[str, Any]] = []
     toc_links_checked = 0
     with pymupdf.open(source) as document:
         expected_width = float(document[0].rect.width)
@@ -74,6 +75,13 @@ def verify_pdf(
             for item in document.get_toc(simple=True)
             if len(item) >= 3
         }
+        chapter_destinations = [
+            (item[1], int(item[2]) - 1)
+            for item in document.get_toc(simple=True)
+            if len(item) >= 3
+            and int(item[0]) == 1
+            and item[1].casefold() not in {"document content", "contents"}
+        ]
         if render_directory:
             render_target = Path(render_directory)
             render_target.mkdir(parents=True, exist_ok=True)
@@ -129,6 +137,24 @@ def verify_pdf(
                 if last[3] > height * 0.78 and last_text in outline_titles:
                     orphan_heading_pages.append(number)
 
+            for chapter_title, target_page in chapter_destinations:
+                if target_page != number - 1:
+                    continue
+                title_key = re.sub(r"\s+", " ", chapter_title).strip().casefold()
+                matching = next(
+                    (
+                        block for block in text_blocks
+                        if title_key in re.sub(r"\s+", " ", str(block[4])).strip().casefold()
+                    ),
+                    None,
+                )
+                if matching:
+                    top_mm = float(matching[1]) * 25.4 / 72
+                    if not 22 <= top_mm <= 28:
+                        chapter_top_violations.append(
+                            {"page": number, "title": chapter_title, "top_mm": round(top_mm, 2)}
+                        )
+
             page_links = page.get_links()
             if page_links:
                 seen_rows: set[tuple[int, int]] = set()
@@ -170,6 +196,7 @@ def verify_pdf(
             or orphan_heading_pages
             or toc_invalid_targets
             or toc_page_number_mismatches
+            or chapter_top_violations
         ),
         "page_count": len(reader.pages),
         "bookmarks_present": bool(reader.outline),
@@ -188,6 +215,7 @@ def verify_pdf(
         "toc_invalid_targets": sorted(set(toc_invalid_targets)),
         "toc_links_checked": toc_links_checked,
         "toc_page_number_mismatches": toc_page_number_mismatches,
+        "chapter_top_violations": chapter_top_violations,
         "protected_pages_verified": len(protected_records),
     }
     return report

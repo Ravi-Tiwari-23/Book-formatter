@@ -10,6 +10,7 @@ import pymupdf
 
 from .config import load_book_style
 from .models import BlockKind, StructuredBlock
+from .theme import BookTheme
 
 
 def _configure_weasyprint_dlls() -> str | None:
@@ -182,7 +183,7 @@ def build_book_html(
     include_title_page: bool = True,
     protected_placeholder_count: int = 0,
 ) -> str:
-    style = style or load_book_style()
+    style = style or BookTheme.load().to_style()
     front_blocks = [block for block in blocks if block.kind == BlockKind.REFERENCE_INFO]
     main_blocks = [
         block
@@ -210,16 +211,19 @@ def build_book_html(
     devanagari_font = (Path(__file__).resolve().parents[2] / "assets/fonts/NotoSerifDevanagari.ttf").as_uri()
     css = f"""
       @font-face {{ font-family: 'Noto Serif Devanagari'; src: url('{devanagari_font}'); font-weight: normal; }}
-      @page {{ size: {style['page_size']}; margin: {style['margin_top_mm']}mm {style['margin_right_mm']}mm {style['margin_bottom_mm']}mm {style['margin_left_mm']}mm;
-        @bottom-center {{ content: counter(page); font-size: 8pt; color: #666; }} }}
-      @page:first {{ @bottom-center {{ content: none; }} }}
+      @page {{ size: A4; margin: {style['margin_top_mm']}mm {style['margin_right_mm']}mm {style['margin_bottom_mm']}mm {style['margin_left_mm']}mm;
+        @bottom-center {{ content: counter(page); font-size: 8pt; color: {style.get('muted_color', '#687875')}; border-top: .45pt solid {style.get('rule_color', '#A8BFBA')}; padding-top: 2mm; width: 100%; text-align: center; }} }}
+      @page cover {{ size: A4; margin: 0; background: {style.get('cover_color', '#154A46')}; @bottom-center {{ content: none; border: 0; }} }}
       * {{ box-sizing: border-box; }}
       html {{ font-family: {body_stack}; color: {style['text_color']}; }}
       body {{ font-size: {style['body_size_pt']}pt; line-height: {style['line_height']}; text-align: justify; }}
-      .title-page {{ page-break-after: always; min-height: 155mm; display: flex; align-items: center; justify-content: center; text-align: center; }}
+      .title-page {{ page: cover; position: relative; page-break-after: always; height: 297mm; padding: 24mm; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: {style.get('cover_text_color', '#F7FAF8')}; background: {style.get('cover_color', '#154A46')}; }}
       .protected-placeholder {{ page-break-after: always; min-height: 155mm; }}
       h1, h2, h3 {{ font-family: {heading_stack}; }}
-      .title-page .book-title {{ font-size: {style['book_title_size_pt']}pt; color: {style['accent_color']}; bookmark-level: none; letter-spacing: .02em; }}
+      .cover-kicker {{ margin: 0 0 12mm; font-size: 9pt; font-weight: 700; letter-spacing: .22em; }}
+      .title-page .book-title {{ max-width: 150mm; margin: 0; font-size: {style['book_title_size_pt']}pt; color: {style.get('cover_text_color', '#F7FAF8')}; bookmark-level: none; letter-spacing: .01em; line-height: 1.16; }}
+      .cover-author {{ margin-top: 9mm; font-size: 12pt; }}
+      .cover-publisher {{ position: absolute; left: 0; right: 0; bottom: 20mm; text-align: center; font-size: 8.5pt; font-weight: 700; letter-spacing: .18em; }}
       .reference-info {{ page-break-after: always; padding-top: 18mm; text-align: left; }}
       .reference-info .eyebrow {{ color: {style['accent_color']}; font-size: 8pt; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }}
       .reference-info h1 {{ color: {style['accent_color']}; font-size: 20pt; margin: .25em 0 1.4em; }}
@@ -238,9 +242,9 @@ def build_book_html(
       .toc-number {{ grid-column: 1; color: {style['accent_color']}; font-variant-numeric: tabular-nums; }}
       .toc-title {{ grid-column: 2; text-align: left; overflow-wrap: anywhere; }}
       .toc-leader {{ grid-column: 3; border-bottom: .6pt dotted #9a8c7e; margin-bottom: .28em; }}
-      .chapter {{ page-break-before: always; padding-top: 24mm; margin: 0 0 10mm; font-size: {style['chapter_size_pt']}pt; line-height: 1.18; text-align: center; color: {style['accent_color']}; break-after: avoid; }}
-      h2 {{ font-size: {style['heading_size_pt']}pt; color: {style['accent_color']}; break-after: avoid; page-break-after: avoid; }}
-      h3 {{ font-size: {style['subheading_size_pt']}pt; break-after: avoid; page-break-after: avoid; }}
+      .chapter {{ page-break-before: always; padding-top: {style.get('chapter_padding_top_mm', 8)}mm; margin: 0 0 9mm; font-size: {style['chapter_size_pt']}pt; line-height: 1.18; text-align: left; color: {style['accent_color']}; break-after: avoid; page-break-after: avoid; }}
+      h2 {{ margin: 5mm 0 2.5mm; font-size: {style['heading_size_pt']}pt; color: {style['accent_color']}; break-after: avoid; page-break-after: avoid; }}
+      h3 {{ margin: 4mm 0 2mm; font-size: {style['subheading_size_pt']}pt; break-after: avoid; page-break-after: avoid; }}
       .remedy {{ margin-top: 5.2mm; }}
       .remedy.short-remedy {{ break-inside: avoid; page-break-inside: avoid; }}
       .remedy-opening {{ break-inside: avoid; page-break-inside: avoid; }}
@@ -250,7 +254,9 @@ def build_book_html(
       .first-paragraph {{ orphans: 3; widows: 3; }}
       p {{ margin: 0 0 {style.get('paragraph_spacing_pt', 6)}pt; orphans: 3; widows: 3; }}
       .source-table {{ border-collapse: collapse; width: 100%; margin: 5mm 0; text-align: left; font-size: 9.5pt; }}
-      .source-table td {{ border: .5pt solid #aaa; padding: 2mm; overflow-wrap: anywhere; }}
+      .source-table td {{ border: .5pt solid {style.get('rule_color', '#A8BFBA')}; padding: 2mm; overflow-wrap: anywhere; }}
+      .source-table tr:nth-child(odd) {{ background: #F2F6F4; }}
+      .list-item {{ position: relative; padding-left: 5mm; text-align: left; }}
       .source-table tr {{ break-inside: avoid; }}
       .verse {{ margin: 1.2em 8%; text-align: center; white-space: normal; break-inside: avoid; }}
       blockquote {{ margin: 1em 8%; font-style: italic; }}
@@ -259,6 +265,13 @@ def build_book_html(
       figcaption {{ margin-top: 1.5mm; font-size: {style.get('caption_size_pt', 8)}pt; line-height: 1.2; color: #766f69; text-align: center; }}
     """
     title = next((b.text for b in blocks if b.kind == BlockKind.BOOK_TITLE), "Book")
+    metadata = style.get("metadata") or {}
+    author = metadata.get("author")
+    publisher = metadata.get("publisher") or style.get("publisher_brand", "TRUELOGER")
+    cover_meta_html = (
+        (f'<p class="cover-author">{html.escape(author)}</p>' if author else "")
+        + (f'<p class="cover-publisher">{html.escape(publisher)}</p>' if publisher else "")
+    )
     if protected_placeholder_count:
         title_html = "".join(
             '<section class="protected-placeholder"></section>'
@@ -266,7 +279,9 @@ def build_book_html(
         )
     else:
         title_html = (
-            f'<section class="title-page"><h1 class="book-title">{html.escape(title)}</h1></section>'
+            '<section class="title-page collection-cover">'
+            '<p class="cover-kicker">READING EDITION</p>'
+            f'<h1 class="book-title">{html.escape(title)}</h1>{cover_meta_html}</section>'
             if include_title_page
             else ""
         )
@@ -282,6 +297,7 @@ def render_book(
     style: dict[str, Any] | None = None,
     include_title_page: bool = True,
     protected_placeholder_count: int = 0,
+    production: bool = False,
 ) -> Path:
     target = Path(output_path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -303,13 +319,14 @@ def render_book(
     except OSError as error:
         if "libgobject" not in str(error).casefold():
             raise
-        if style and style.get('page_dimensions_pt'):
-            raise RuntimeError('Adaptive export requires the WeasyPrint rendering libraries. '
-                               'Install/configure GTK before building this document.') from error
+        if production:
+            raise RuntimeError(
+                "Final production requires WeasyPrint with GTK/Pango. Configure BOOKLOOM_GTK_BIN, then retry."
+            ) from error
         _render_pymupdf_fallback(
             blocks,
             target,
-            style or load_book_style(),
+            style or BookTheme.load().to_style(),
             include_title_page=include_title_page,
             protected_placeholder_count=protected_placeholder_count,
         )
@@ -334,8 +351,8 @@ def _render_pymupdf_fallback(
 ) -> None:
     """Portable Windows fallback used only when WeasyPrint's GTK stack is absent."""
     document = pymupdf.open()
-    page_width, page_height = pymupdf.paper_size(style.get("page_size", "A5"))
-    margin = 48
+    page_width, page_height = pymupdf.paper_size("A4")
+    margin = float(style.get("margin_left_mm", 18)) * 72 / 25.4
 
     title = next((block.text for block in blocks if block.kind == BlockKind.BOOK_TITLE), "Book")
     if protected_placeholder_count:
@@ -343,10 +360,18 @@ def _render_pymupdf_fallback(
             document.new_page(width=page_width, height=page_height)
     elif include_title_page:
         title_page = document.new_page(width=page_width, height=page_height)
+        title_page.draw_rect(
+            title_page.rect,
+            color=_hex_rgb(style.get("cover_color", "#154A46")),
+            fill=_hex_rgb(style.get("cover_color", "#154A46")),
+        )
+        metadata = style.get("metadata") or {}
+        author = metadata.get("author") or ""
+        publisher = metadata.get("publisher") or style.get("publisher_brand", "TRUELOGER")
         title_page.insert_htmlbox(
             pymupdf.Rect(margin, page_height * 0.32, page_width - margin, page_height * 0.72),
-            f"<h1>{html.escape(title)}</h1>",
-            css=f"* {{font-family: sans-serif; text-align:center; color:{style['accent_color']};}} h1{{font-size:24pt;}}",
+            f"<p>READING EDITION</p><h1>{html.escape(title)}</h1><h2>{html.escape(author)}</h2><p>{html.escape(publisher)}</p>",
+            css="* {font-family: serif; text-align:center; color:#F7FAF8;} h1{font-size:28pt;} h2{font-size:12pt;} p{font-size:9pt;letter-spacing:2px;}",
         )
 
     headings = [
@@ -373,7 +398,11 @@ def _render_pymupdf_fallback(
         if current_page is None or (is_chapter and y > margin):
             current_page = document.new_page(width=page_width, height=page_height)
             current_number = len(document)
-            y = margin
+            y = (
+                (float(style.get("margin_top_mm", 16)) + float(style.get("chapter_padding_top_mm", 8))) * 72 / 25.4
+                if is_chapter
+                else float(style.get("margin_top_mm", 16)) * 72 / 25.4
+            )
         sizes = {
             BlockKind.CHAPTER: 19,
             BlockKind.HEADING: 15,
@@ -406,10 +435,22 @@ def _render_pymupdf_fallback(
 
     for number, page in enumerate(document, start=1):
         if number > 1:
+            footer_y = page_height - 28
+            page.draw_line(
+                pymupdf.Point(margin, footer_y - 8),
+                pymupdf.Point(page_width - margin, footer_y - 8),
+                color=_hex_rgb(style.get("rule_color", "#A8BFBA")),
+                width=0.45,
+            )
             page.insert_text(
-                pymupdf.Point(page_width / 2 - 4, page_height - 20), str(number), fontsize=8, color=(0.4, 0.4, 0.4)
+                pymupdf.Point(page_width / 2 - 4, footer_y), str(number), fontsize=8, color=(0.4, 0.4, 0.4)
             )
     document.set_toc(toc)
     document.save(target, garbage=4, deflate=True)
     document.close()
+
+
+def _hex_rgb(value: str) -> tuple[float, float, float]:
+    value = value.lstrip("#")
+    return tuple(int(value[index:index + 2], 16) / 255 for index in (0, 2, 4))
 

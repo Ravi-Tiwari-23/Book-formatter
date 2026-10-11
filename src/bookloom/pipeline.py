@@ -12,7 +12,7 @@ import time
 import pymupdf
 
 from .assets import prepend_protected_pages
-from .blockers import validate_production_readiness
+from .blockers import BuildBlockedError, validate_production_readiness
 from .cache import DiskCache
 from .config import BookProfile, load_book_style, load_protected_terms
 from .differences import Difference, DifferenceType, compare_sections
@@ -43,6 +43,7 @@ from .review import apply_decision, default_decision_for, effective_decision, ef
 from .sections import SectionMatch, align_sections, detect_document_sections, normalize_title
 from .semantic import build_document_model, document_model_from_structured_blocks
 from .structure import detect_structure
+from .theme import BookTheme
 from .validation import build_corrections
 from .verification import verify_image_occurrences, verify_pdf, write_verification_report
 
@@ -707,7 +708,7 @@ class ProjectPipeline:
             document_model=document_model,
             source_document_model=document_model,
             semantic_images=semantic_images,
-            protected_pages=source_analysis.cover_pages,
+            protected_pages=[],
             document_profile=source_analysis,
             job_id=job_id,
             source_upload_name=source_upload_name or source_path.name,
@@ -797,13 +798,22 @@ class ProjectPipeline:
             build_key,
             preview=allow_unresolved_source,
         )
-        style = project.document_profile.style(load_book_style()) if project.document_profile else load_book_style()
+        language = (
+            "hi"
+            if project.document_profile and project.document_profile.language in {"hindi", "mixed"}
+            else "en"
+        )
+        style = BookTheme.load().to_style(
+            language=language,
+            metadata=project.metadata.to_dict(),
+        )
         render_book(
             blocks,
             formatted if project.protected_pages else final_pdf,
             style=style,
             include_title_page=not project.protected_pages,
             protected_placeholder_count=len(project.protected_pages),
+            production=production,
         )
         protected_records: list[dict] = []
         if project.protected_pages:
@@ -877,6 +887,7 @@ class ProjectPipeline:
                 ("orphan_heading_pages", "orphan headings"),
                 ("toc_invalid_targets", "invalid TOC targets"),
                 ("toc_page_number_mismatches", "incorrect printed TOC page numbers"),
+                ("chapter_top_violations", "chapter headings outside the 22–28 mm top band"),
             ):
                 if verification.get(key):
                     layout_reasons.append(f"{label}: {verification[key]}")
