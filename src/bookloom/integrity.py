@@ -56,6 +56,9 @@ def normalize_integrity_text(value: str, *, for_matching: bool = False) -> str:
         # and change typographic punctuation/case. These are presentation
         # differences, not permission to rewrite any word or digit.
         value = re.sub(r"\s*([/,:;!?।])\s*", r"\1", value)
+        value = re.sub(r"\s+\.", ".", value)
+        value = re.sub(r"([([{])\s+", r"\1", value)
+        value = re.sub(r"\s+([)\]}])", r"\1", value)
         value = re.sub(r"\s*-\s*", "-", value)
         value = value.casefold()
     return value
@@ -453,12 +456,18 @@ def verify_rendered_pdf(
         if not page_match_text:
             continue
         if output_parts:
-            cursor += 1
+            separator = ""
+            if not re.search(r"[/,:;!?।-]$", output_parts[-1]) and not re.match(
+                r"^[/,:;!?।)\]}-]", page_match_text
+            ):
+                separator = " "
+            output_parts.append(separator)
+            cursor += len(separator)
         start = cursor
         output_parts.append(page_match_text)
         cursor += len(page_match_text)
         page_ranges.append((start, cursor, page_number))
-    output = " ".join(output_parts)
+    output = "".join(output_parts)
 
     def page_for_position(position: int) -> int | None:
         return next(
@@ -499,12 +508,20 @@ def verify_rendered_pdf(
         if normalize_integrity_text(segment, for_matching=True) not in exact_values
     ]
 
-    for unit in expected:
-        normalized = unit.match_text
-        spans = exact_occurrences.setdefault(normalized, occurrences(normalized))
+    # Allocate exact matches longest-first so a short approved label cannot
+    # claim text that belongs to a later, longer approved paragraph.
+    exact_assignments: dict[str, tuple[int, int]] = {}
+    for unit in sorted(expected, key=lambda item: len(item.match_text), reverse=True):
+        spans = exact_occurrences.setdefault(unit.match_text, occurrences(unit.match_text))
         available = next((span for span in spans if not overlaps_assigned(span)), None)
         if available:
             assigned_spans.append(available)
+            exact_assignments[unit.id] = available
+
+    for unit in expected:
+        normalized = unit.match_text
+        available = exact_assignments.get(unit.id)
+        if available:
             positions.append((available[0], unit))
             continue
 

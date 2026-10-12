@@ -284,6 +284,47 @@ def test_pdf_verification_does_not_double_count_nested_approved_text(tmp_path):
     assert report.passed is True, report.to_dict()
 
 
+def test_pdf_verification_assigns_long_text_before_an_earlier_nested_unit(tmp_path):
+    path = tmp_path / "nested-approved-text-short-first.pdf"
+    _save_pages(
+        path,
+        [[
+            (72, 72, "Numerology"),
+            (72, 100, "A long discussion of Numerology remains source-faithful."),
+        ]],
+    )
+    expected = [
+        _unit("label", "Numerology", 0),
+        _unit("body", "A long discussion of Numerology remains source-faithful.", 1),
+    ]
+
+    report = verify_rendered_pdf(path, expected)
+
+    assert report.passed is True, report.to_dict()
+
+
+def test_pdf_verification_normalizes_punctuation_across_page_breaks(tmp_path):
+    path = tmp_path / "punctuation-page-break.pdf"
+    _save_pages(
+        path,
+        [
+            [(72, 100, "The author thanks her parents, gurus, mentors,")],
+            [(72, 100, "God Shiva and the wider community.")],
+        ],
+    )
+    expected = [
+        _unit(
+            "body",
+            "The author thanks her parents, gurus, mentors, God Shiva and the wider community.",
+            0,
+        )
+    ]
+
+    report = verify_rendered_pdf(path, expected)
+
+    assert report.passed is True, report.to_dict()
+
+
 def test_pdf_verification_accepts_reported_table_extraction_variants(tmp_path):
     path = tmp_path / "vastu-table.pdf"
     rendered = (

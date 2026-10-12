@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 from typing import Any
 import re
@@ -43,6 +44,70 @@ def verify_image_occurrences(
     }
 
 
+def _page_signature(page: pymupdf.Page) -> str | None:
+    """Return a stable signature for content-rich pages, ignoring page folios."""
+    lines = [
+        re.sub(r"\s+", " ", line).strip().casefold()
+        for line in page.get_text("text").splitlines()
+    ]
+    text = "\n".join(line for line in lines if line and not line.isdigit())
+    if len(text) < 40:
+        return None
+    image_parts = sorted(
+        str(info.get("digest", b"").hex() if isinstance(info.get("digest"), bytes) else info.get("digest", ""))
+        for info in page.get_image_info(hashes=True)
+    )
+    payload = f"{text}\n{'|'.join(image_parts)}".encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _representative_pages(
+    page_facts: list[dict[str, Any]],
+) -> dict[str, int]:
+    if not page_facts:
+        return {}
+    roles: dict[str, int] = {"cover": 1, "final": int(page_facts[-1]["page"])}
+    for fact in page_facts:
+        number = int(fact["page"])
+        text = str(fact["text"])
+        folded = text.casefold()
+        if "contents" not in roles and re.search(r"\bcontents?\b", folded):
+            roles["contents"] = number
+        if (
+            "chapter" not in roles
+            and number != roles.get("contents")
+            and re.search(r"\bchapter\s+(?:\d+|[ivxlcdm]+|one|two|three)\b", folded)
+        ):
+            roles["chapter"] = number
+        if "table" not in roles and (
+            re.search(r"\btable\b", folded)
+            or ("column" in folded and "value" in folded)
+        ):
+            roles["table"] = number
+        if "references" not in roles and re.search(r"\b(?:references|bibliography)\b", folded):
+            roles["references"] = number
+        if "compact_item" not in roles and re.search(r"(?m)^\s*\d{1,3}\s*$", text):
+            roles["compact_item"] = number
+        if "image" not in roles and fact["image_count"]:
+            roles["image"] = number
+    excluded = {roles.get("cover"), roles.get("contents")}
+    first_body = next(
+        (
+            int(fact["page"])
+            for fact in page_facts
+            if fact["page"] not in excluded and len(str(fact["text"]).strip()) >= 20
+        ),
+        None,
+    )
+    if first_body is not None:
+        roles["first_body"] = first_body
+    return roles
+
+
+def _issue(code: str, message: str, pages: list[int], *, severity: str = "error") -> dict[str, Any]:
+    return {"code": code, "severity": severity, "pages": pages, "message": message}
+
+
 def verify_pdf(
     pdf_path: str | Path,
     *,
@@ -66,6 +131,13 @@ def verify_pdf(
     toc_invalid_targets: list[int] = []
     toc_page_number_mismatches: list[dict[str, Any]] = []
     chapter_top_violations: list[dict[str, Any]] = []
+    duplicate_page_groups: list[list[int]] = []
+    missing_glyph_pages: list[int] = []
+    suspicious_image_only_pages: list[int] = []
+    table_footer_collision_pages: list[int] = []
+    cover_numbered = False
+    page_facts: list[dict[str, Any]] = []
+    page_signatures: dict[str, list[int]] = {}
     toc_links_checked = 0
     with pymupdf.open(source) as document:
         expected_width = float(document[0].rect.width)
@@ -94,6 +166,14 @@ def verify_pdf(
                 for info in page.get_image_info(xrefs=True)
                 if info.get("bbox") and pymupdf.Rect(info["bbox"]).get_area() > 1
             ]
+            page_facts.append(
+                {"page": number, "text": text, "image_count": len(image_infos)}
+            )
+            signature = _page_signature(page)
+            if signature:
+                page_signatures.setdefault(signature, []).append(number)
+            if "\ufffd" in text or "□" in text or "\x00" in text:
+                missing_glyph_pages.append(number)
             if not text and not image_infos:
                 blank_pages.append(number)
             width = float(page.rect.width)
@@ -114,12 +194,32 @@ def verify_pdf(
                 if not page.rect.contains(rect):
                     overflow_pages.append(number)
             coverage = (text_area + image_area) / max(1.0, width * height)
+            image_coverage = image_area / max(1.0, width * height)
             intentional = number <= max(1, len(protected_records)) or any(
                 marker in text.casefold()
                 for marker in ("contents", "reference information", "chapter")
             )
             if coverage < 0.025 and not intentional:
                 almost_empty_pages.append(number)
+            if number > max(1, len(protected_records)) and not text and image_coverage >= 0.65:
+                suspicious_image_only_pages.append(number)
+
+            if number == 1:
+                cover_numbered = any(
+                    float(block[1]) >= height * 0.88
+                    and re.fullmatch(r"\s*\d+\s*", str(block[4]))
+                    for block in text_blocks
+                )
+
+            table_like = bool(re.search(r"\btable\b", text, re.IGNORECASE)) or (
+                "column" in text.casefold() and "value" in text.casefold()
+            )
+            if table_like and any(
+                float(block[3]) >= height * 0.92
+                and not re.fullmatch(r"\s*\d+\s*", str(block[4]))
+                for block in text_blocks
+            ):
+                table_footer_collision_pages.append(number)
 
             if number > len(protected_records) and image_infos and not re.search(
                 r"source(?: image)?\s*(?:-|–|—|:)\s*(?:page|.+,\s*p\.)",
@@ -187,17 +287,48 @@ def verify_pdf(
             if render_directory:
                 pixmap = page.get_pixmap(matrix=pymupdf.Matrix(1.4, 1.4), alpha=False)
                 pixmap.save(Path(render_directory) / f"page-{number:04d}.png")
+        duplicate_page_groups = sorted(
+            pages for pages in page_signatures.values() if len(pages) > 1
+        )
+    issues: list[dict[str, Any]] = []
+    checks = (
+        ("BLANK_PAGE", "Blank page detected.", blank_pages, "error"),
+        ("NEAR_EMPTY_PAGE", "Page has unusually little visible content.", almost_empty_pages, "warning"),
+        ("PAGE_SIZE_MISMATCH", "Page size differs from the production page size.", page_size_mismatches, "error"),
+        ("IMAGE_CAPTION", "An image is missing its source caption.", image_caption_issues, "error"),
+        ("PAGE_OVERFLOW", "Content extends beyond the page boundary.", overflow_pages, "error"),
+        ("ORPHAN_HEADING", "A heading is stranded at the bottom of a page.", orphan_heading_pages, "error"),
+        ("INVALID_TOC_TARGET", "A contents link points outside the document.", toc_invalid_targets, "error"),
+        ("MISSING_GLYPH", "A replacement or missing-glyph marker is visible.", missing_glyph_pages, "error"),
+        ("SUSPICIOUS_IMAGE_ONLY_PAGE", "A non-cover page is almost entirely an unexplained image.", suspicious_image_only_pages, "error"),
+        ("TABLE_FOOTER_COLLISION", "Table content reaches the reserved footer band.", table_footer_collision_pages, "error"),
+    )
+    for code, message, pages, severity in checks:
+        if pages:
+            issues.append(_issue(code, message, sorted(set(pages)), severity=severity))
+    for pages in duplicate_page_groups:
+        issues.append(_issue("DUPLICATE_PAGE", "Pages have identical production content.", pages))
+    if cover_numbered:
+        issues.append(_issue("COVER_NUMBERED", "The cover must not display a page number.", [1]))
+    if toc_page_number_mismatches:
+        issues.append(
+            _issue(
+                "TOC_PAGE_MISMATCH",
+                "A printed contents page number does not match its link target.",
+                sorted({int(item["toc_page"]) for item in toc_page_number_mismatches}),
+            )
+        )
+    if chapter_top_violations:
+        issues.append(
+            _issue(
+                "CHAPTER_TOP_BAND",
+                "A chapter heading falls outside the configured top band.",
+                sorted({int(item["page"]) for item in chapter_top_violations}),
+            )
+        )
+    fatal_issues = [issue for issue in issues if issue["severity"] == "error"]
     report = {
-        "valid": not (
-            blank_pages
-            or page_size_mismatches
-            or image_caption_issues
-            or overflow_pages
-            or orphan_heading_pages
-            or toc_invalid_targets
-            or toc_page_number_mismatches
-            or chapter_top_violations
-        ),
+        "valid": not fatal_issues,
         "page_count": len(reader.pages),
         "bookmarks_present": bool(reader.outline),
         "fonts": sorted(font_names),
@@ -216,6 +347,13 @@ def verify_pdf(
         "toc_links_checked": toc_links_checked,
         "toc_page_number_mismatches": toc_page_number_mismatches,
         "chapter_top_violations": chapter_top_violations,
+        "duplicate_page_groups": duplicate_page_groups,
+        "missing_glyph_pages": sorted(set(missing_glyph_pages)),
+        "suspicious_image_only_pages": sorted(set(suspicious_image_only_pages)),
+        "table_footer_collision_pages": sorted(set(table_footer_collision_pages)),
+        "cover_numbered": cover_numbered,
+        "representative_pages": _representative_pages(page_facts),
+        "issues": issues,
         "protected_pages_verified": len(protected_records),
     }
     return report

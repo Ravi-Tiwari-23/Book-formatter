@@ -671,7 +671,11 @@ class ProjectPipeline:
             language=source_analysis.language,
             toc_titles=set(source_analysis.toc_titles),
         )
-        semantic_images = analyze_images(source, document_model)
+        semantic_images = analyze_images(
+            source,
+            document_model,
+            excluded_pages={*source_analysis.cover_pages, *source_analysis.toc_pages},
+        )
         source_analysis.image_associations = [
             {
                 "occurrence_id": item.occurrence_id,
@@ -888,9 +892,15 @@ class ProjectPipeline:
                 ("toc_invalid_targets", "invalid TOC targets"),
                 ("toc_page_number_mismatches", "incorrect printed TOC page numbers"),
                 ("chapter_top_violations", "chapter headings outside the 22–28 mm top band"),
+                ("duplicate_page_groups", "duplicate pages"),
+                ("missing_glyph_pages", "missing glyph markers"),
+                ("suspicious_image_only_pages", "unexplained image-only pages"),
+                ("table_footer_collision_pages", "table/footer collisions"),
             ):
                 if verification.get(key):
                     layout_reasons.append(f"{label}: {verification[key]}")
+            if verification.get("cover_numbered"):
+                layout_reasons.append("cover page is numbered")
             raise BuildBlockedError(layout_reasons or ["layout QA failed"])
         verification_path = write_verification_report(
             verification, verification_path_target
@@ -1027,7 +1037,15 @@ class ProjectPipeline:
         if not project.semantic_images and any(page.images for page in project.source.pages):
             source_model = project.source_document_model or build_document_model(project.source)
             project.source_document_model = source_model
-            project.semantic_images = analyze_images(project.source, source_model)
+            excluded_pages = set()
+            if project.document_profile:
+                excluded_pages.update(project.document_profile.cover_pages)
+                excluded_pages.update(project.document_profile.toc_pages)
+            project.semantic_images = analyze_images(
+                project.source,
+                source_model,
+                excluded_pages=excluded_pages,
+            )
         source_images = {
             (image.digest, page.page_number, image.bbox): image
             for page in project.source.pages

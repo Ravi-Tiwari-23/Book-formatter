@@ -4,6 +4,7 @@ import hashlib
 import math
 import re
 from collections import Counter, defaultdict
+from collections.abc import Collection
 
 from .models import (
     DocumentModel,
@@ -21,7 +22,12 @@ _CAPTION_SIGNAL = re.compile(
 )
 
 
-def analyze_images(document: ExtractedDocument, model: DocumentModel) -> list[SemanticImage]:
+def analyze_images(
+    document: ExtractedDocument,
+    model: DocumentModel,
+    *,
+    excluded_pages: Collection[int] = (),
+) -> list[SemanticImage]:
     """Classify every source image using document-wide recurrence and layout."""
 
     occurrences: list[tuple[object, ExtractedImage]] = [
@@ -60,7 +66,9 @@ def analyze_images(document: ExtractedDocument, model: DocumentModel) -> list[Se
         caption_block = _nearest_caption(model, page.page_number, bbox)
         before, after, parent = _anchors(model, page.page_number, bbox)
 
-        if page.used_ocr and coverage >= 0.75:
+        if page.page_number in excluded_pages:
+            classification, emit, confidence = VisualClass.COVER_ART, False, 0.99
+        elif page.used_ocr and coverage >= 0.75:
             classification, emit, confidence = VisualClass.SCAN, False, 0.99
         elif repeated and stable_position and edge:
             classification, emit, confidence = VisualClass.FURNITURE, False, 0.98

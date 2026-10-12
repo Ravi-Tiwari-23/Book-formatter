@@ -46,3 +46,13 @@ def test_reference_metadata_never_invents_missing_author_or_doi():
     assert "Author: Not identified in the supplied reference" in rendered
     assert "DOI:" not in rendered
 
+
+def test_author_heading_does_not_promote_the_next_body_sentence_to_a_person():
+    metadata = extract_reference_metadata(
+        _document(
+            "Author\nsystematically studying these number combinations, this paper aims to provide a deeper"
+        )
+    )
+
+    assert metadata.author is None
+

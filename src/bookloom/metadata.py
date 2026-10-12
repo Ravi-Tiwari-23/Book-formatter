@@ -139,6 +139,18 @@ def _pdf_metadata(document: ExtractedDocument) -> dict[str, str]:
     return result
 
 
+def _plausible_person_name(value: str) -> bool:
+    words = value.split()
+    if not words or len(words) > 10 or len(value) > 100:
+        return False
+    latin_letters = [character for character in value if character.isascii() and character.isalpha()]
+    if latin_letters and not any(character.isupper() for character in latin_letters):
+        return False
+    if re.search(r"\b(?:this paper|this study|aims? to|provides?|studying|results?|abstract)\b", value, re.I):
+        return False
+    return True
+
+
 def _title_candidate(lines: list[str]) -> str | None:
     candidates: list[tuple[int, str]] = []
     for index, line in enumerate(lines[:50]):
@@ -173,7 +185,11 @@ def extract_document_metadata(document: ExtractedDocument) -> DocumentMetadata:
                 author = _next_value(lines, index, match.group(1))
                 break
     author = author or pdf_metadata.get("author")
-    if author and not _EXCLUDED_PERSON_TERMS.search(author):
+    if (
+        author
+        and not _EXCLUDED_PERSON_TERMS.search(author)
+        and _plausible_person_name(author)
+    ):
         result.author = author
         result.confidence["author"] = "HIGH" if author != pdf_metadata.get("author") else "MEDIUM"
 

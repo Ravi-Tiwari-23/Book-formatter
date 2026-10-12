@@ -5,6 +5,7 @@ import pymupdf
 import pytest
 
 from bookloom.integrity import ProductionIntegrityError
+from bookloom.integrity import normalize_integrity_text
 from bookloom.models import (
     BookSection,
     BlockKind,
@@ -69,6 +70,15 @@ def test_canonical_units_use_approved_source_text_not_raw_ocr_or_reference(tmp_p
     assert units[0].source_page == 1
     assert units[0].original_text == "Raw OCR paragraf."
     assert units[0].text == "Approved corrected paragraph."
+
+
+def test_integrity_matching_tolerates_extractor_spacing_around_punctuation():
+    expected = "Mother. In the system, Rahu (north) remains unchanged."
+    extracted = "Mother . In the system ,Rahu ( north ) remains unchanged ."
+
+    assert normalize_integrity_text(expected, for_matching=True) == normalize_integrity_text(
+        extracted, for_matching=True
+    )
 
 
 def test_stale_same_shape_renderer_text_is_resynchronized_without_losing_kind(tmp_path):

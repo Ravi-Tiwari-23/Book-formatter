@@ -62,6 +62,25 @@ def test_full_page_scan_is_excluded_from_figure_emission() -> None:
     assert result.emit is False
 
 
+def test_detected_cover_and_contents_images_are_not_reinserted_as_figures() -> None:
+    pages = [
+        _page(1, [_image(1, "cover-logo", (150, 120, 450, 220))]),
+        _page(2, [_image(2, "contents-decoration", (80, 500, 220, 640))]),
+        _page(3, [_image(3, "body-figure", (80, 200, 500, 450))]),
+    ]
+
+    results = analyze_images(
+        ExtractedDocument(Path("front-matter.pdf"), pages, "sha"),
+        _model(3),
+        excluded_pages={1, 2},
+    )
+
+    assert [item.emit for item in results] == [False, False, True]
+    assert all(
+        item.classification == VisualClass.COVER_ART for item in results[:2]
+    )
+
+
 def test_meaningful_figures_keep_logical_occurrences_and_reading_order_anchors() -> None:
     pages = [
         _page(1, [_image(1, "figure-a", (100, 115, 400, 135))]),
