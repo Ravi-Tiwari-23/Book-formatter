@@ -115,4 +115,3 @@ def approve_document(corrections: list[Correction]) -> DocumentApproval:
         edit_count=sum(effective_decision(item) == Decision.EDIT for item in corrections),
         effective_text_sha256=hashlib.sha256(effective.encode("utf-8")).hexdigest(),
     )
-

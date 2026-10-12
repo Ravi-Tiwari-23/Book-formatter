@@ -401,4 +401,3 @@ def verify_text_integrity(
         }
     )
     return result
-

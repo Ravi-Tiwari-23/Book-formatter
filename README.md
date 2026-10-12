@@ -1,54 +1,70 @@
 # Bookloom
 
-Bookloom is the PDF review and production application. Trueloger is retained
-only as the publisher identity used by the current house style and source
-materials; it is not the software name.
+Bookloom is a local PDF-to-book production workspace. It extracts a source PDF, uses a second PDF only as validation evidence, lets an editor review exceptions, and produces a source-faithful A4 reading edition after one final approval.
 
-A local Windows application for reference-led Hindi/English PDF validation,
-human correction approval, and professional book production. The source and
-reference PDFs are never overwritten.
+Bookloom is the software and project name. **TRUELOGER** appears only as the publisher identity in the current Reading Edition theme.
 
-## Capabilities
+## What Bookloom does
 
-- Per-page direct extraction with PyMuPDF and OCR fallback for scanned pages.
-- Tesseract 5 OCR at 300 DPI with `hin+eng`, word confidence, and preprocessing.
-- Monotonic fuzzy paragraph matching with RapidFuzz, independent of page numbers.
-- Conservative reference/rule-based suggestions with protected terminology.
-- Explicit Accept, Reject, Edit, Keep Source, and Use Reference decisions.
-- Locked final text before structure detection or formatting.
-- Editable title/chapter/heading/body/verse/list structure.
-- A5 HTML/CSS book template with TOC, page numbers, and PDF bookmarks.
-- Exact cloning of selected Trulogger opening/logo/art pages.
-- Original embedded-image byte extraction and hash recording.
-- Validation report, corrections JSON, approved text, manifest, QA renderings,
-  verification report, and final PDF.
-- Number/title/sequence-based remedy section alignment, including recognition
-  and production gating for remedies 1-33.
-- Strict reference text-only mode: reference images are fingerprinted for QA
-  but never enter the publication asset pipeline.
-- Output-image provenance firewall and production blockers for missing sections,
-  unresolved reviews, missing protected assets, fonts, and reference imagery.
-- Book-specific profiles under `config/books/` without hardcoding titles into
-  the processing engine.
-- Native-text-first extraction with versioned, persistent extraction, per-page
-  OCR, comparison, lazy-preview, provenance, and verified-build caches.
-- Section-scoped matching with exact-text fast paths before bounded RapidFuzz
-  candidate searches; exact matches are resolved automatically.
-- Real stage timings and cache counters in the UI and in each build's
-  `performance-report.json`.
-- Review-first pagination (25 records per page), pre-render filters, and 120 DPI
-  page previews generated only when requested.
-- Canonical remedy detection selects the ordered 1–33 heading sequence and
-  keeps cover, contents, publication, disclaimer, and introduction material
-  outside the remedy count. Repeated headers, footers, nested numbered lists,
-  and doubled extraction artifacts are suppressed.
-- Exact and safe non-semantic matches are auto-approved. Final book generation
-  remains locked until meaningful differences are reviewed and the approved
-  text is explicitly finalized.
+- Reads native, scanned, and mixed PDFs; OCR runs only where a usable text layer is absent.
+- Supports English, Hindi, and mixed Hindi/English documents when the matching Tesseract language packs are installed.
+- Treats the source PDF as authoritative. Reference-only or low-confidence wording is never inserted automatically.
+- Detects chapters, headings, paragraphs, lists, verses, tables, captions, figures, front matter, and bibliographic metadata.
+- Suppresses cover art, scans, repeated logos, watermarks, and page furniture instead of treating them as body illustrations.
+- Keeps meaningful source figures in reading order with their aspect ratio and source caption.
+- Applies conservative defaults, autosaves optional overrides, and asks for one document-level approval.
+- Produces a fixed A4 edition with a generated cover, linked contents page, compact chapter top spacing, bookmarks, footer rule, and page numbers.
+- Blocks a production build when text, image, pagination, glyph, page-size, overflow, or contents checks fail.
 
-## Windows setup
+The source and reference PDFs are copied into an isolated job directory. They are never overwritten.
 
-From PowerShell in VS Code:
+## Workflow
+
+1. Upload the **Source PDF** to be published.
+2. Upload the **Reference PDF** used to check wording and metadata. Its layout and images are not copied into the book.
+3. Open **Processing options** only when OCR needs a custom Tesseract path or the original source cover must be preserved.
+4. Select **Analyze PDFs**.
+5. Review the grouped findings if desired. Safe spelling/OCR corrections can default to the suggestion; semantic, numeric, missing-content, and low-confidence findings default to the source.
+6. Select **Review and approve document**, confirm the complete decision set once, and build the A4 Reading Edition.
+7. Download the numbered PDF. The PDF preview and audit files are available separately and are loaded only when requested.
+
+Changing an override invalidates the previous approval, so stale decisions cannot silently reach production.
+
+## Output names and artifacts
+
+The PDF keeps the uploaded source name and adds a number:
+
+```text
+Complete House Vastu.pdf
+→ Complete House Vastu 1.pdf
+→ Complete House Vastu 2.pdf
+```
+
+An unchanged cached build reuses its existing number. Preview files use `Preview 1`, `Preview 2`, and so on, without consuming production numbers. Windows-invalid filename characters are removed safely while Unicode names are retained.
+
+Each successful job can include:
+
+- the numbered final PDF;
+- `validation-report.md` and `corrections.json`;
+- `final-approved-text.md` and `final-approved-text.json`;
+- `source_structure.json` and `document-analysis.json`;
+- `build-manifest.json` with source, reference, output, renderer, font, approval, and hash data;
+- `verification-report.json` with text, image, layout, contents, page-size, and visual-QA results;
+- `performance-report.json`; and
+- `qa-pages/` renderings for visual inspection.
+
+## Requirements
+
+- Windows 10 or 11
+- Python 3.11 or newer
+- Tesseract OCR 5 with `eng.traineddata` and `hin.traineddata` for scanned English/Hindi pages
+- WeasyPrint's GTK/Pango runtime for the primary CSS production renderer
+
+Native-text PDFs do not require Tesseract. Bookloom reports the availability of both Tesseract and WeasyPrint in the sidebar.
+
+## Install and run on Windows
+
+Open PowerShell in the repository directory:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
@@ -56,59 +72,90 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\run.ps1
 ```
 
-Streamlit opens the local application in the default browser. Alternatively:
+`setup.ps1` creates `.venv`, upgrades packaging tools, and installs Bookloom with its development and image-processing dependencies. `run.ps1` starts Streamlit and discovers a compatible GTK runtime without modifying the global `PATH`.
+
+To start the app directly:
 
 ```powershell
 .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-### Tesseract OCR
+### Tesseract
 
-Install Tesseract OCR 5 and ensure both `eng.traineddata` and
-`hin.traineddata` are present in its `tessdata` directory. Add the installation
-directory to `PATH`, or paste the full `tesseract.exe` path into the UI. Text
-PDFs do not require Tesseract.
+Install Tesseract 5 and ensure the English and Hindi language files are present in its `tessdata` directory. Put `tesseract.exe` on `PATH`, or enter its full path in Bookloom's Processing options.
 
-### WeasyPrint on Windows
+### WeasyPrint and GTK
 
-WeasyPrint is the primary HTML/CSS renderer and needs its GTK/Pango native
-runtime on Windows. If those DLLs are not available, the application reports
-that status and uses its bundled PyMuPDF renderer fallback. This keeps local
-generation operational; install GTK/Pango before production typesetting to use
-the exact WeasyPrint CSS layout.
+The launcher searches these locations in order:
 
-The launcher automatically discovers the official MSYS2 UCRT64 runtime at
-`C:\msys64-truelogger\ucrt64\bin` or `C:\msys64\ucrt64\bin`. A custom runtime
-can be selected with `BOOKLOOM_GTK_BIN` (or the legacy
-`TRUELOGGER_GTK_BIN`); no global `PATH` modification is
-required.
+1. `BOOKLOOM_GTK_BIN`
+2. the legacy migration variable `TRUELOGGER_GTK_BIN`
+3. `C:\msys64-truelogger\ucrt64\bin`
+4. `C:\msys64\ucrt64\bin`
+
+The selected folder must contain `libgobject-2.0-0.dll`. `BOOKLOOM_GTK_BIN` is the public configuration name; the older variable and directory are read only for compatibility with existing installations.
+
+Example:
+
+```powershell
+$env:BOOKLOOM_GTK_BIN = "C:\msys64\ucrt64\bin"
+.\run.ps1
+```
+
+## Quality and safety model
+
+Bookloom verifies the approved semantic document before rendering and then extracts the finished PDF to verify it again. Production checks cover:
+
+- missing, changed, duplicated, unexpected, or reordered approved text;
+- missing, duplicated, unexpected, or misordered source-image occurrences;
+- reference-image leakage;
+- blank, near-empty, duplicate, inconsistent-size, overflowing, or suspicious image-only pages;
+- orphan headings, table/footer collisions, missing-glyph markers, and numbered covers;
+- invalid contents links or printed page-number mismatches; and
+- chapter headings outside the 22–28 mm physical top band.
+
+The generated cover is the default. Preserving selected original cover pages is opt-in, and their PDF content hashes are checked after assembly.
+
+## Architecture
+
+The code lives under `src/bookloom/`:
+
+- extraction and OCR create page-level source records;
+- document analysis and semantic modeling infer structure without using the reference layout;
+- matching and review create conservative findings and effective decisions;
+- rendering consumes only the approved semantic model and central A4 theme;
+- integrity and verification enforce text, image, provenance, and layout gates; and
+- Streamlit provides the upload → review → build → download workflow.
+
+Processing caches live under `work/cache/`. Uploaded job files live under `work/uploads/`. Generated application output lives under `output/`. These local runtime directories are ignored by Git and can be cleared from the sidebar.
 
 ## Tests
 
+Run the complete suite from the repository root:
+
 ```powershell
-.\.venv\Scripts\python.exe -m pytest --basetemp tmp\pytest
+.\.venv\Scripts\python.exe -m pytest --basetemp tmp\pytest-bookloom
 ```
 
-## Output safety
+The suite includes native/scanned/mixed extraction, Hindi rendering, source/reference authority, one-approval behavior, image classification, heading inference, filename versioning, production integrity, visual QA, and Streamlit AppTest coverage.
 
-Uploaded inputs are copied into `work/uploads/` under a content hash. Generated
-artifacts are written under `output/`. Protected pages are copied as PDF page
-objects without rasterization; their content-stream hashes are verified after
-the final PDF is written.
+## Troubleshooting
 
-Processing caches live under `work/cache/` and persist across application
-restarts. The sidebar can clear previews, comparisons, the current book, or all
-caches independently. Changing a review decision or building a PDF does not
-restart extraction or comparison.
+- **Analyze PDFs is disabled:** both PDF upload fields are required.
+- **Scanned pages have no text:** install Tesseract, add `eng`/`hin` language data, and verify the executable path in Processing options.
+- **WeasyPrint is unavailable:** install a GTK/Pango runtime and set `BOOKLOOM_GTK_BIN`; restart Bookloom afterward.
+- **Final build is blocked:** open the reported integrity or layout details. Bookloom deliberately refuses to download an unverified production PDF.
+- **A title or author is missing:** Bookloom omits uncertain metadata instead of inventing it. The source remains authoritative.
+- **A repeated logo is missing from the body:** cover art, contents decoration, watermarks, and repeating furniture are intentionally suppressed. Meaningful body figures remain eligible.
+- **A second build has `2` in its name:** numbered names prevent accidental overwrite. An identical cached build keeps its existing number.
 
-The development preview button is explicitly marked **PREVIEW ONLY**. It uses
-the current source wording for unresolved passages and cannot create a
-production build or silently apply unresolved reference text.
+## Privacy
 
-For **33 Quick Vastu Remedies**, upload the TRUELOGER source as the Source PDF
-and `33 Quick Vastu Remedies(1).pdf` as the Reference PDF. The UI first permits
-a remedies 1-3 preview. The production button remains blocked until remedies
-1-33 are present, every correction is resolved, and protected pages are
-selected. Production artifacts are written beneath `output/pdf/` with the
-book-specific filenames defined in the Phase 2 profile.
+Processing is local. Bookloom does not upload documents to a remote model or service. Anyone with filesystem access to this computer may still be able to read `work/`, `output/`, and cache artifacts, so clear them before sharing the machine or repository.
 
+## Current production limits
+
+- OCR quality depends on scan resolution, orientation, language data, and source print quality.
+- Complex multi-column and heavily designed pages may require editorial review even when integrity checks pass.
+- The fixed output is A4; source page dimensions do not change the Reading Edition size.
+- WeasyPrint plus GTK/Pango is the supported high-fidelity production path. The PyMuPDF renderer is a compatibility fallback and can differ in advanced CSS pagination.

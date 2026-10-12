@@ -171,4 +171,3 @@ def detect_structure(text: str) -> list[StructuredBlock]:
             kind, level = BlockKind.BODY, 0
         blocks.append(StructuredBlock(kind, paragraph, level=level))
     return blocks
-

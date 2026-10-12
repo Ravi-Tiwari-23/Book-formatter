@@ -1,5 +1,7 @@
 # Bookloom Universal Book Formatter and One-Approval Review Design
 
+> Implementation status (2026-10-12): complete and verified against the automated regression matrix and a supplied source/reference PDF pair. Bookloom is the software identity; Trueloger remains publisher branding only.
+
 ## Purpose
 
 Transform structurally different source PDFs into one professional Trueloger Reading Edition while keeping the source authoritative, using the reference PDF only for validation and bibliographic evidence, and requiring only one mandatory document-level approval before production.

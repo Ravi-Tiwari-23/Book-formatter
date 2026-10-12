@@ -347,5 +347,3 @@ class BookSection:
     @property
     def reference_page_start(self) -> int:
         return self.page_start
-
-
